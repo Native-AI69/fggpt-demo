@@ -798,34 +798,60 @@ with tab1:
                 help="Combined value per MW"
             )
         
-        # Waterfall Chart
+        # Waterfall Chart (using stacked bar for color control)
         st.markdown("#### 📊 Value Waterfall (Per MW Basis)")
         
-        fig_waterfall = go.Figure(go.Waterfall(
-            name="Value Breakdown",
-            orientation="v",
-            measure=["absolute", "relative", "relative", "total"],
-            x=["FG Break-even<br>(Cost Basis)", "FG Margin<br>(FG Profit)", "Client Uplift<br>(Your Value)", "Total Value<br>$/MW/Year"],
-            y=[breakeven_per_mw, fg_margin_per_mw_at_scale, client_uplift_per_mw, 0],
-            text=[f"${breakeven_per_mw:,.0f}", f"${fg_margin_per_mw_at_scale:,.0f}", f"${client_uplift_per_mw:,.0f}", f"${combined['per_mw']:,.0f}"],
-            textposition="outside",
-            connector={"line": {"color": "rgb(63, 63, 63)"}},
-            decreasing={"marker": {"color": "#dc3545"}},
-            increasing={"marker": {"color": "#28a745"}},
-            totals={"marker": {"color": "#1F4E79"}},
+        fig_waterfall = go.Figure()
+        
+        # Add bars in order (stacked from bottom)
+        fig_waterfall.add_trace(go.Bar(
+            name="FG Break-even",
+            x=["Value Breakdown"],
+            y=[breakeven_per_mw],
+            marker_color="#ff9800",
+            text=f"${breakeven_per_mw:,.0f}",
+            textposition="inside",
+            insidetextanchor="middle",
         ))
         
-        # Custom colors for each bar
-        fig_waterfall.update_traces(
-            marker_color=["#ff9800", "#1F4E79", "#28a745", "#1F4E79"]
-        )
+        fig_waterfall.add_trace(go.Bar(
+            name="FG Margin",
+            x=["Value Breakdown"],
+            y=[fg_margin_per_mw_at_scale],
+            marker_color="#1F4E79",
+            text=f"${fg_margin_per_mw_at_scale:,.0f}",
+            textposition="inside",
+            insidetextanchor="middle",
+        ))
+        
+        fig_waterfall.add_trace(go.Bar(
+            name="Client Uplift",
+            x=["Value Breakdown"],
+            y=[client_uplift_per_mw],
+            marker_color="#28a745",
+            text=f"${client_uplift_per_mw:,.0f}",
+            textposition="inside",
+            insidetextanchor="middle",
+        ))
         
         fig_waterfall.update_layout(
             title=f"Value Creation Breakdown at {mw_contracted:,.0f} MW ({year_option}: ${fg_annual_cost/1e6:.2f}M budget)",
             yaxis_title="$/MW/Year",
             yaxis_tickformat="$,.0f",
             height=400,
-            showlegend=False,
+            barmode="stack",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        )
+        
+        # Add total annotation at the top
+        fig_waterfall.add_annotation(
+            x="Value Breakdown",
+            y=combined['per_mw'],
+            text=f"<b>Total: ${combined['per_mw']:,.0f}/MW</b>",
+            showarrow=False,
+            yshift=15,
+            font=dict(size=14)
         )
         
         st.plotly_chart(fig_waterfall, use_container_width=True)
