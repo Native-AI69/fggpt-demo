@@ -116,11 +116,12 @@ if not show_access_disclaimer():
 # ============================================
 @st.cache_data
 def load_budget_data(filepath="3Years.xlsx"):
-    """Load 3-year budget from Excel file."""
+    """Load 3-year budget from Excel file and add Year 4 projection."""
     default_budget = {
         'Year 1': 682000,
         'Year 2': 1404700,
         'Year 3': 2076800,
+        'Year 4': 3236200,  # Multi-market expansion (ERCOT + CAISO + PJM)
     }
     
     try:
@@ -134,12 +135,53 @@ def load_budget_data(filepath="3Years.xlsx"):
                         'Year 1': float(row.iloc[2]) if pd.notna(row.iloc[2]) else default_budget['Year 1'],
                         'Year 2': float(row.iloc[3]) if pd.notna(row.iloc[3]) else default_budget['Year 2'],
                         'Year 3': float(row.iloc[4]) if pd.notna(row.iloc[4]) else default_budget['Year 3'],
+                        'Year 4': default_budget['Year 4'],  # Always use projected Y4
                     }
         return default_budget
     except Exception as e:
         return default_budget
 
 BUDGET_DATA = load_budget_data()
+
+# ARR Targets
+ARR_TARGETS = {
+    'Year 1': 500000,    # 2026 - Pilots
+    'Year 2': 1500000,   # 2027 - Break-even
+    'Year 3': 3500000,   # 2028 - Profitable, scaling
+    'Year 4': 10000000,  # 2029 - Series A Ready
+}
+
+# Budget line items by category (for detailed breakdown)
+BUDGET_DETAILS = {
+    'Personnel': {
+        'Year 1': 120000, 'Year 2': 567000, 'Year 3': 929500, 'Year 4': 1397000,
+        'notes': 'Y4: CEO/CTO at market rate + Sr. CAISO Trader'
+    },
+    'Model Development': {
+        'Year 1': 250000, 'Year 2': 312500, 'Year 3': 421875, 'Year 4': 675000,
+        'notes': 'Y4: Fine-tune for CAISO & PJM, 3x compute'
+    },
+    'Data Acquisition': {
+        'Year 1': 30000, 'Year 2': 37500, 'Year 3': 50625, 'Year 4': 125000,
+        'notes': 'Y4: +CAISO feeds, +PJM feeds, weather expansion'
+    },
+    'Pilots/Customer Success': {
+        'Year 1': 80000, 'Year 2': 100000, 'Year 3': 135000, 'Year 4': 270000,
+        'notes': 'Y4: 3 markets, 2x customer base'
+    },
+    'Compliance & Security': {
+        'Year 1': 30000, 'Year 2': 150000, 'Year 3': 202500, 'Year 4': 275000,
+        'notes': 'Y4: Multi-ISO compliance'
+    },
+    'G&A Operations': {
+        'Year 1': 110000, 'Year 2': 110000, 'Year 3': 148500, 'Year 4': 200000,
+        'notes': 'Y4: Scale admin'
+    },
+    'Contingency (10%)': {
+        'Year 1': 62000, 'Year 2': 127700, 'Year 3': 188800, 'Year 4': 294200,
+        'notes': '10% reserve'
+    },
+}
 
 # BASE LOOKUP TABLES (at 90/50/10 capture rates)
 RN_BASE = {3: 22406, 4: 21622, 5: 20790, 6: 19999, 7: 19187, 8: 18384, 9: 17642, 10: 16926, 11: 16348, 12: 15823}
@@ -232,7 +274,7 @@ if st.sidebar.button("🔒 Lock Session", help="Re-display the confidentiality n
     st.session_state["disclaimer_accepted"] = False
     st.session_state["password_error"] = False
     st.rerun()
-st.sidebar.markdown("*FG-GPT v11.1*")
+st.sidebar.markdown("*FG-GPT v12.0*")
 
 # Get zone distribution for current MAE
 zones = ZONE_DISTRIBUTION.get(mae, ZONE_DISTRIBUTION[6])
@@ -349,7 +391,7 @@ with tab1:
     with be_col1:
         year_option = st.selectbox(
             "Select Year",
-            options=["Year 1", "Year 2", "Year 3", "Custom"],
+            options=["Year 1", "Year 2", "Year 3", "Year 4", "Custom"],
             index=0,
             help="Select budget year or enter custom amount"
         )
@@ -848,127 +890,164 @@ with tab6:
 
 # TAB 7 - BUDGET
 with tab7:
-    st.markdown("## 💼 FG-GPT 3-Year Budget")
-    st.markdown("*Operating cost structure for break-even analysis*")
+    st.markdown("## 💼 FG-GPT 4-Year Budget & ARR Roadmap")
+    st.markdown("*Operating cost structure and revenue targets for Series A*")
     
-    # Key metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Year 1", "${:,.0f}".format(BUDGET_DATA['Year 1']))
-    c2.metric("Year 2", "${:,.0f}".format(BUDGET_DATA['Year 2']))
-    c3.metric("Year 3", "${:,.0f}".format(BUDGET_DATA['Year 3']))
-    total_3yr = BUDGET_DATA['Year 1'] + BUDGET_DATA['Year 2'] + BUDGET_DATA['Year 3']
-    c4.metric("3-Year Total", "${:,.0f}".format(total_3yr))
+    # Key metrics - 4 years
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("2026 (Y1)", "${:,.0f}".format(BUDGET_DATA['Year 1']), delta="Pilots")
+    c2.metric("2027 (Y2)", "${:,.0f}".format(BUDGET_DATA['Year 2']), delta="Break-even")
+    c3.metric("2028 (Y3)", "${:,.0f}".format(BUDGET_DATA['Year 3']), delta="Profitable")
+    c4.metric("2029 (Y4)", "${:,.0f}".format(BUDGET_DATA['Year 4']), delta="Series A")
+    total_4yr = sum(BUDGET_DATA.values())
+    c5.metric("4-Year Total", "${:,.0f}".format(total_4yr))
     
     st.markdown("---")
     
+    # ARR vs Budget comparison
+    st.markdown("### 🎯 Budget vs ARR Targets")
+    
+    years_list = ["2026 (Y1)", "2027 (Y2)", "2028 (Y3)", "2029 (Y4)"]
+    budget_vals = [BUDGET_DATA['Year 1'], BUDGET_DATA['Year 2'], BUDGET_DATA['Year 3'], BUDGET_DATA['Year 4']]
+    arr_vals = [ARR_TARGETS['Year 1'], ARR_TARGETS['Year 2'], ARR_TARGETS['Year 3'], ARR_TARGETS['Year 4']]
+    
+    fig_comparison = go.Figure()
+    fig_comparison.add_trace(go.Bar(
+        name="Operating Budget",
+        x=years_list,
+        y=budget_vals,
+        marker_color="#1F4E79",
+        text=["${:,.1f}M".format(v/1e6) for v in budget_vals],
+        textposition="outside"
+    ))
+    fig_comparison.add_trace(go.Bar(
+        name="Target ARR",
+        x=years_list,
+        y=arr_vals,
+        marker_color="#28a745",
+        text=["${:,.1f}M".format(v/1e6) for v in arr_vals],
+        textposition="outside"
+    ))
+    fig_comparison.update_layout(
+        barmode="group",
+        yaxis_title="$ Amount",
+        yaxis_tickformat="$,.0f",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+    )
+    st.plotly_chart(fig_comparison, use_container_width=True)
+    
+    # Summary metrics table
+    summary_data = {
+        "Metric": ["Operating Budget", "Target ARR", "ARR/Cost Ratio", "Markets", "Est. MWs"],
+        "2026 (Y1)": [
+            "${:,.0f}".format(BUDGET_DATA['Year 1']),
+            "${:,.0f}".format(ARR_TARGETS['Year 1']),
+            "{:.2f}x".format(ARR_TARGETS['Year 1']/BUDGET_DATA['Year 1']),
+            "ERCOT",
+            "~21 MW"
+        ],
+        "2027 (Y2)": [
+            "${:,.0f}".format(BUDGET_DATA['Year 2']),
+            "${:,.0f}".format(ARR_TARGETS['Year 2']),
+            "{:.2f}x".format(ARR_TARGETS['Year 2']/BUDGET_DATA['Year 2']),
+            "ERCOT",
+            "~63 MW"
+        ],
+        "2028 (Y3)": [
+            "${:,.0f}".format(BUDGET_DATA['Year 3']),
+            "${:,.0f}".format(ARR_TARGETS['Year 3']),
+            "{:.2f}x".format(ARR_TARGETS['Year 3']/BUDGET_DATA['Year 3']),
+            "ERCOT",
+            "~147 MW"
+        ],
+        "2029 (Y4)": [
+            "${:,.0f}".format(BUDGET_DATA['Year 4']),
+            "${:,.0f}".format(ARR_TARGETS['Year 4']),
+            "{:.2f}x".format(ARR_TARGETS['Year 4']/BUDGET_DATA['Year 4']),
+            "ERCOT + CAISO + PJM",
+            "~421 MW"
+        ],
+    }
+    st.dataframe(pd.DataFrame(summary_data), hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Detailed Budget Breakdown with Weight %
+    st.markdown("### 📋 Detailed Budget Breakdown (with Weight %)")
+    
+    budget_rows = []
+    categories = ["Personnel", "Model Development", "Data Acquisition", "Pilots/Customer Success", 
+                  "Compliance & Security", "G&A Operations", "Contingency (10%)"]
+    
+    for cat in categories:
+        y1 = BUDGET_DETAILS[cat]['Year 1']
+        y2 = BUDGET_DETAILS[cat]['Year 2']
+        y3 = BUDGET_DETAILS[cat]['Year 3']
+        y4 = BUDGET_DETAILS[cat]['Year 4']
+        
+        budget_rows.append({
+            "Category": cat,
+            "Y1 ($)": "${:,.0f}".format(y1),
+            "Y1 %": "{:.1f}%".format(y1/BUDGET_DATA['Year 1']*100),
+            "Y2 ($)": "${:,.0f}".format(y2),
+            "Y2 %": "{:.1f}%".format(y2/BUDGET_DATA['Year 2']*100),
+            "Y3 ($)": "${:,.0f}".format(y3),
+            "Y3 %": "{:.1f}%".format(y3/BUDGET_DATA['Year 3']*100),
+            "Y4 ($)": "${:,.0f}".format(y4),
+            "Y4 %": "{:.1f}%".format(y4/BUDGET_DATA['Year 4']*100),
+        })
+    
+    # Add TOTAL row
+    budget_rows.append({
+        "Category": "**TOTAL**",
+        "Y1 ($)": "**${:,.0f}**".format(BUDGET_DATA['Year 1']),
+        "Y1 %": "100%",
+        "Y2 ($)": "**${:,.0f}**".format(BUDGET_DATA['Year 2']),
+        "Y2 %": "100%",
+        "Y3 ($)": "**${:,.0f}**".format(BUDGET_DATA['Year 3']),
+        "Y3 %": "100%",
+        "Y4 ($)": "**${:,.0f}**".format(BUDGET_DATA['Year 4']),
+        "Y4 %": "100%",
+    })
+    
+    # Add ARR row
+    budget_rows.append({
+        "Category": "🎯 **Target ARR**",
+        "Y1 ($)": "**${:,.0f}**".format(ARR_TARGETS['Year 1']),
+        "Y1 %": "-",
+        "Y2 ($)": "**${:,.0f}**".format(ARR_TARGETS['Year 2']),
+        "Y2 %": "-",
+        "Y3 ($)": "**${:,.0f}**".format(ARR_TARGETS['Year 3']),
+        "Y3 %": "-",
+        "Y4 ($)": "**${:,.0f}**".format(ARR_TARGETS['Year 4']),
+        "Y4 %": "-",
+    })
+    
+    # Add ARR/Cost ratio row
+    budget_rows.append({
+        "Category": "📈 **ARR/Cost Ratio**",
+        "Y1 ($)": "{:.2f}x".format(ARR_TARGETS['Year 1']/BUDGET_DATA['Year 1']),
+        "Y1 %": "-",
+        "Y2 ($)": "{:.2f}x".format(ARR_TARGETS['Year 2']/BUDGET_DATA['Year 2']),
+        "Y2 %": "-",
+        "Y3 ($)": "{:.2f}x".format(ARR_TARGETS['Year 3']/BUDGET_DATA['Year 3']),
+        "Y3 %": "-",
+        "Y4 ($)": "{:.2f}x".format(ARR_TARGETS['Year 4']/BUDGET_DATA['Year 4']),
+        "Y4 %": "-",
+    })
+    
+    st.dataframe(pd.DataFrame(budget_rows), hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Budget composition comparison
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 📊 Annual Budget Progression")
-        years = ["Year 1", "Year 2", "Year 3"]
-        values = [BUDGET_DATA['Year 1'], BUDGET_DATA['Year 2'], BUDGET_DATA['Year 3']]
-        
-        fig_budget = go.Figure()
-        fig_budget.add_trace(go.Bar(
-            x=years,
-            y=values,
-            marker_color=["#1F4E79", "#2E75B6", "#5BA3D9"],
-            text=["${:,.0f}".format(v) for v in values],
-            textposition="outside"
-        ))
-        fig_budget.update_layout(
-            yaxis_title="Annual Budget ($)",
-            yaxis_tickformat="$,.0f",
-            height=350,
-            showlegend=False
-        )
-        st.plotly_chart(fig_budget, use_container_width=True)
-    
-    with col2:
-        st.markdown("### 📈 Monthly Burn Rate")
-        monthly_burn = [BUDGET_DATA['Year 1']/12, BUDGET_DATA['Year 2']/12, BUDGET_DATA['Year 3']/12]
-        
-        fig_burn = go.Figure()
-        fig_burn.add_trace(go.Scatter(
-            x=years,
-            y=monthly_burn,
-            mode="lines+markers+text",
-            marker=dict(size=12, color="#ff9800"),
-            line=dict(width=3, color="#ff9800"),
-            text=["${:,.0f}".format(v) for v in monthly_burn],
-            textposition="top center"
-        ))
-        fig_burn.update_layout(
-            yaxis_title="Monthly Burn ($)",
-            yaxis_tickformat="$,.0f",
-            height=350
-        )
-        st.plotly_chart(fig_burn, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # Try to load detailed budget breakdown
-    st.markdown("### 📋 Detailed Budget Breakdown")
-    
-    try:
-        if os.path.exists("3Years.xlsx"):
-            xlsx = pd.ExcelFile("3Years.xlsx")
-            df_summary = pd.read_excel(xlsx, sheet_name='3-Year Summary')
-            
-            # Extract relevant rows for display
-            budget_rows = []
-            for idx, row in df_summary.iterrows():
-                code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
-                category = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
-                
-                # Skip empty rows and header rows
-                if code in ['Code', 'NaN', '', 'nan'] or category in ['NaN', '', 'nan']:
-                    continue
-                
-                # Get values
-                y1 = row.iloc[2] if pd.notna(row.iloc[2]) else 0
-                y2 = row.iloc[3] if pd.notna(row.iloc[3]) else 0
-                y3 = row.iloc[4] if pd.notna(row.iloc[4]) else 0
-                
-                # Only include rows with actual budget codes or subtotals
-                if code.isdigit() or 'Subtotal' in category or 'TOTAL' in category or 'CONTINGENCY' in category:
-                    if isinstance(y1, (int, float)) and (y1 > 0 or y2 > 0 or y3 > 0):
-                        budget_rows.append({
-                            "Code": code if code.isdigit() else "",
-                            "Category": category,
-                            "Year 1": "${:,.0f}".format(y1) if isinstance(y1, (int, float)) else "-",
-                            "Year 2": "${:,.0f}".format(y2) if isinstance(y2, (int, float)) else "-",
-                            "Year 3": "${:,.0f}".format(y3) if isinstance(y3, (int, float)) else "-",
-                        })
-            
-            if budget_rows:
-                st.dataframe(pd.DataFrame(budget_rows), hide_index=True, use_container_width=True)
-            else:
-                # Fallback to simple display
-                raise Exception("No detailed data found")
-        else:
-            raise Exception("File not found")
-            
-    except Exception as e:
-        # Fallback: show simple budget table
-        simple_budget = {
-            "Category": ["Personnel", "Model Development", "Data Acquisition", "Pilots/Customer Success", 
-                        "Compliance & Security", "G&A Operations", "Contingency (10%)", "TOTAL"],
-            "Year 1": ["$120,000", "$250,000", "$30,000", "$80,000", "$30,000", "$110,000", "$62,000", "${:,.0f}".format(BUDGET_DATA['Year 1'])],
-            "Year 2": ["$567,000", "$312,500", "$37,500", "$100,000", "$150,000", "$110,000", "$127,700", "${:,.0f}".format(BUDGET_DATA['Year 2'])],
-            "Year 3": ["$929,500", "$421,875", "$50,625", "$135,000", "$202,500", "$148,500", "$188,800", "${:,.0f}".format(BUDGET_DATA['Year 3'])],
-        }
-        st.dataframe(pd.DataFrame(simple_budget), hide_index=True, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # Budget composition pie chart
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 🥧 Year 1 Composition")
-        y1_categories = ["Personnel", "Model Dev", "Data", "Pilots", "Compliance", "G&A", "Contingency"]
-        y1_values = [120000, 250000, 30000, 80000, 30000, 110000, 62000]
+        st.markdown("### 🥧 Year 1 Composition (2026)")
+        y1_categories = list(BUDGET_DETAILS.keys())
+        y1_values = [BUDGET_DETAILS[cat]['Year 1'] for cat in y1_categories]
         
         fig_pie1 = go.Figure(data=[go.Pie(
             labels=y1_categories,
@@ -976,21 +1055,52 @@ with tab7:
             hole=0.4,
             marker_colors=["#1F4E79", "#2E75B6", "#5BA3D9", "#8BC4EA", "#28a745", "#ff9800", "#dc3545"]
         )])
-        fig_pie1.update_layout(height=300)
+        fig_pie1.update_layout(height=300, showlegend=True)
+        fig_pie1.add_annotation(text="Y1<br>${:.1f}M".format(BUDGET_DATA['Year 1']/1e6), x=0.5, y=0.5, font_size=12, showarrow=False)
         st.plotly_chart(fig_pie1, use_container_width=True)
     
     with col2:
-        st.markdown("### 🥧 Year 3 Composition")
-        y3_categories = ["Personnel", "Model Dev", "Data", "Pilots", "Compliance", "G&A", "Contingency"]
-        y3_values = [929500, 421875, 50625, 135000, 202500, 148500, 188800]
+        st.markdown("### 🥧 Year 4 Composition (2029)")
+        y4_values = [BUDGET_DETAILS[cat]['Year 4'] for cat in y1_categories]
         
-        fig_pie3 = go.Figure(data=[go.Pie(
-            labels=y3_categories,
-            values=y3_values,
+        fig_pie4 = go.Figure(data=[go.Pie(
+            labels=y1_categories,
+            values=y4_values,
             hole=0.4,
             marker_colors=["#1F4E79", "#2E75B6", "#5BA3D9", "#8BC4EA", "#28a745", "#ff9800", "#dc3545"]
         )])
-        fig_pie3.update_layout(height=300)
-        st.plotly_chart(fig_pie3, use_container_width=True)
+        fig_pie4.update_layout(height=300, showlegend=True)
+        fig_pie4.add_annotation(text="Y4<br>${:.1f}M".format(BUDGET_DATA['Year 4']/1e6), x=0.5, y=0.5, font_size=12, showarrow=False)
+        st.plotly_chart(fig_pie4, use_container_width=True)
     
-    st.info("💡 **Note:** Budget data is loaded from `3Years.xlsx`. Update the Excel file to modify budget assumptions.")
+    st.markdown("---")
+    
+    # Year 4 expansion notes
+    st.markdown("### 🚀 Year 4 Multi-Market Expansion")
+    
+    exp_col1, exp_col2, exp_col3 = st.columns(3)
+    
+    with exp_col1:
+        st.markdown("""
+        **Personnel (+$467k)**
+        - CEO/CTO at market rate ($200k each)
+        - Sr. CAISO Trader ($187.5k)
+        """)
+    
+    with exp_col2:
+        st.markdown("""
+        **Model Development (+$253k)**
+        - Fine-tune for CAISO market
+        - Fine-tune for PJM market
+        - 3x compute capacity
+        """)
+    
+    with exp_col3:
+        st.markdown("""
+        **Data & Pilots (+$209k)**
+        - CAISO data feeds
+        - PJM data feeds
+        - 3 markets, 2x customers
+        """)
+    
+    st.success("💡 **The Story:** Y1-Y3 prove the model in ERCOT. Y4 we expand to CAISO + PJM (70%+ of U.S. renewable capacity). $3.2M operating cost generates $10M ARR = 3.1x return. Series A funds the scale, not the proof.")
