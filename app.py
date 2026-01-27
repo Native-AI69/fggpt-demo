@@ -2,32 +2,144 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import os
 
 st.set_page_config(page_title="FG-GPT Value Creation Model", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
-# PASSWORD
-def check_password():
-    def password_entered():
-        if st.session_state.get("password", "") == "FG-GPT2025":
-            st.session_state["password_correct"] = True
-        else:
-            st.session_state["password_correct"] = False
+# ============================================
+# ACCESS CONTROL / DISCLAIMER + PASSWORD
+# ============================================
+ACCESS_PASSWORD = "FG2026!"
 
-    if st.session_state.get("password_correct", False):
+def show_access_disclaimer():
+    """Display confidentiality notice, require acknowledgment, and verify password."""
+    
+    if st.session_state.get("access_granted", False):
         return True
     
-    st.markdown("<h1 style='text-align: center;'>🔒 FG-GPT Value Creation Model</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>This dashboard is password protected.</p>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    .disclaimer-box {
+        background-color: rgba(30, 30, 30, 0.9);
+        border: 1px solid #444;
+        border-left: 4px solid #1F4E79;
+        border-radius: 8px;
+        padding: 30px;
+        margin: 50px auto;
+        max-width: 600px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.text_input("Enter Password:", type="password", key="password", on_change=password_entered)
-        if st.session_state.get("password_correct") == False:
-            st.error("Incorrect password")
-    return False
+    disclaimer_accepted = st.session_state.get("disclaimer_accepted", False)
+    
+    if not disclaimer_accepted:
+        with st.container():
+            st.markdown("---")
+            with st.expander("⚠️ Important Notice – Authorized Use Only", expanded=True):
+                st.markdown("### CONFIDENTIAL – LIMITED ACCESS")
+                st.markdown("""
+                This application and its contents are proprietary and confidential. 
+                By accessing this application, you acknowledge that:
+                """)
+                st.markdown("""
+                • You are **not** a competitor or engaged in model replication
+                
+                • You will **not share** access credentials or URLs
+                
+                • Data, visuals, and methodologies are **not for redistribution**
+                """)
+                st.caption("Access events may be logged for audit and security purposes.")
+                st.markdown("---")
+                
+                accepted = st.checkbox("I acknowledge and agree", key="disclaimer_checkbox")
+                
+                if accepted:
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    with col2:
+                        if st.button("Continue", type="primary", use_container_width=True):
+                            st.session_state["disclaimer_accepted"] = True
+                            st.rerun()
+                else:
+                    st.info("Please check the box above to acknowledge and proceed.")
+        return False
+    
+    else:
+        with st.container():
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.markdown("### 🔐 Enter Access Password")
+                st.markdown("Please enter your authorized access password to continue.")
+                st.markdown("")
+                
+                password_input = st.text_input(
+                    "Password",
+                    type="password",
+                    key="password_input",
+                    placeholder="Enter password...",
+                    help="Contact Foresight Grid if you don't have a password"
+                )
+                
+                if st.session_state.get("password_error", False):
+                    st.error("❌ Incorrect password. Please try again.")
+                
+                st.markdown("")
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("← Back", use_container_width=True):
+                        st.session_state["disclaimer_accepted"] = False
+                        st.session_state["password_error"] = False
+                        st.rerun()
+                
+                with col_b:
+                    if st.button("Enter Application", type="primary", use_container_width=True):
+                        if password_input == ACCESS_PASSWORD:
+                            st.session_state["access_granted"] = True
+                            st.session_state["password_error"] = False
+                            st.rerun()
+                        else:
+                            st.session_state["password_error"] = True
+                            st.rerun()
+                
+                st.markdown("---")
+                st.caption("🔒 Access is restricted to authorized users only.")
+                st.caption("📧 Need access? Contact: sales@foresightgrid.com")
+        return False
 
-if not check_password():
+if not show_access_disclaimer():
     st.stop()
+
+# ============================================
+# BUDGET DATA LOADING
+# ============================================
+@st.cache_data
+def load_budget_data(filepath="3Years.xlsx"):
+    """Load 3-year budget from Excel file."""
+    default_budget = {
+        'Year 1': 682000,
+        'Year 2': 1404700,
+        'Year 3': 2076800,
+    }
+    
+    try:
+        if os.path.exists(filepath):
+            xlsx = pd.ExcelFile(filepath)
+            df = pd.read_excel(xlsx, sheet_name='3-Year Summary')
+            
+            for idx, row in df.iterrows():
+                if 'TOTAL BUDGET' in str(row.iloc[0]):
+                    return {
+                        'Year 1': float(row.iloc[2]) if pd.notna(row.iloc[2]) else default_budget['Year 1'],
+                        'Year 2': float(row.iloc[3]) if pd.notna(row.iloc[3]) else default_budget['Year 2'],
+                        'Year 3': float(row.iloc[4]) if pd.notna(row.iloc[4]) else default_budget['Year 3'],
+                    }
+        return default_budget
+    except Exception as e:
+        return default_budget
+
+BUDGET_DATA = load_budget_data()
 
 # BASE LOOKUP TABLES (at 90/50/10 capture rates)
 RN_BASE = {3: 22406, 4: 21622, 5: 20790, 6: 19999, 7: 19187, 8: 18384, 9: 17642, 10: 16926, 11: 16348, 12: 15823}
@@ -97,7 +209,7 @@ plant_mw = st.sidebar.number_input("Plant Capacity [MW]", 50, 1000, 240, 10)
 virtual_mw = st.sidebar.number_input("Virtual Position [MW]", 0, 500, 100, 10)
 
 st.sidebar.markdown("### Fee Structure")
-fee_rate = st.sidebar.slider("FG Fee Rate [%]", 15, 50, 37, 1)
+fee_rate = st.sidebar.slider("FG Fee Rate [%]", 0, 50, 37, 1)
 
 st.sidebar.markdown("### Capture Rates")
 cap_high = st.sidebar.slider("High Zone Capture [%]", 50, 100, 90, 5)
@@ -115,7 +227,12 @@ else:
     hedge_hub = st.sidebar.selectbox("Hedge Hub (prod hours)", list(HUB_STATS.keys()), index=0)  # Default SOUTH
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("*FG-GPT v10.0*")
+if st.sidebar.button("🔒 Lock Session", help="Re-display the confidentiality notice and password"):
+    st.session_state["access_granted"] = False
+    st.session_state["disclaimer_accepted"] = False
+    st.session_state["password_error"] = False
+    st.rerun()
+st.sidebar.markdown("*FG-GPT v11.0*")
 
 # Get zone distribution for current MAE
 zones = ZONE_DISTRIBUTION.get(mae, ZONE_DISTRIBUTION[6])
@@ -218,6 +335,205 @@ with tab1:
             "$/MW/Yr": ["${:,.0f}".format(rn_only_val/plant_mw), "${:,.0f}".format(vt_only_val/plant_mw), "${:,.0f}".format(combined_val/plant_mw)],
         }
         st.dataframe(pd.DataFrame(comp_data), hide_index=True)
+    
+    # ============================================
+    # BREAK-EVEN ANALYSIS SECTION
+    # ============================================
+    st.markdown("---")
+    st.markdown("### 💰 Break-even Analysis")
+    st.markdown("*Understand FG's cost basis and your value potential*")
+    
+    # Year selector
+    be_col1, be_col2, be_col3 = st.columns([1, 1, 2])
+    
+    with be_col1:
+        year_option = st.selectbox(
+            "Select Year",
+            options=["Year 1", "Year 2", "Year 3", "Custom"],
+            index=0,
+            help="Select budget year or enter custom amount"
+        )
+    
+    with be_col2:
+        if year_option == "Custom":
+            fg_annual_cost = st.number_input(
+                "Custom Budget ($)",
+                min_value=100000,
+                max_value=10000000,
+                value=2500000,
+                step=100000,
+                format="%d"
+            )
+        else:
+            fg_annual_cost = BUDGET_DATA[year_option]
+            st.metric("FG Annual Budget", "${:,.0f}".format(fg_annual_cost))
+    
+    # Calculate break-even metrics
+    mw_contracted = mw_for_10m  # Use MW for $10M as contracted capacity
+    
+    if mw_contracted > 0 and fee_rate > 0:
+        breakeven_per_mw = fg_annual_cost / mw_contracted
+        fg_revenue_per_mw_at_scale = 10000000 / mw_contracted
+        fg_margin_per_mw_at_scale = fg_revenue_per_mw_at_scale - breakeven_per_mw
+        client_uplift_per_mw = value_per_mw - fg_revenue_per_mw_at_scale
+        
+        margin_of_safety = fg_revenue_per_mw_at_scale / breakeven_per_mw if breakeven_per_mw > 0 else 0
+        
+        with be_col3:
+            margin_pct_text = "(FG only needs {:.0f}% of projected value to cover costs)".format(1/margin_of_safety*100) if margin_of_safety > 0 else ""
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
+                        padding: 15px; border-radius: 10px; border-left: 4px solid #28a745; color: #1b5e20;">
+                <b>At {:,.0f} MW contracted:</b><br>
+                Break-even: <b>${:,.0f}/MW/Year</b><br>
+                Margin of Safety: <b>{:.1f}x</b> 
+                <span style="color: #2e7d32; font-size: 0.9em;">{}</span>
+            </div>
+            """.format(mw_contracted, breakeven_per_mw, margin_of_safety, margin_pct_text), unsafe_allow_html=True)
+        
+        # Break-even metrics row
+        be_met_col1, be_met_col2, be_met_col3, be_met_col4 = st.columns(4)
+        
+        with be_met_col1:
+            st.metric(
+                "Break-even $/MW",
+                "${:,.0f}".format(breakeven_per_mw),
+                help="FG's cost basis per MW (Budget ÷ Contracted MWs)"
+            )
+        
+        with be_met_col2:
+            margin_pct = (fg_margin_per_mw_at_scale/fg_revenue_per_mw_at_scale)*100 if fg_revenue_per_mw_at_scale > 0 else 0
+            st.metric(
+                "FG Margin $/MW",
+                "${:,.0f}".format(fg_margin_per_mw_at_scale),
+                delta="{:.0f}% of FG revenue".format(margin_pct),
+                help="FG profit above break-even"
+            )
+        
+        with be_met_col3:
+            st.metric(
+                "Client Uplift $/MW",
+                "${:,.0f}".format(client_uplift_per_mw),
+                delta="{:.0f}% of total".format((client_uplift_per_mw/value_per_mw)*100) if value_per_mw > 0 else "0%",
+                help="Client's share of value"
+            )
+        
+        with be_met_col4:
+            st.metric(
+                "Total $/MW",
+                "${:,.0f}".format(value_per_mw),
+                help="Combined value per MW"
+            )
+        
+        # Waterfall Chart
+        st.markdown("#### 📊 Value Waterfall (Per MW Basis)")
+        
+        base1 = 0
+        base2 = breakeven_per_mw
+        base3 = breakeven_per_mw + fg_margin_per_mw_at_scale
+        total_value_chart = value_per_mw
+        
+        fig_waterfall = go.Figure()
+        
+        fig_waterfall.add_trace(go.Bar(
+            name="FG Break-even (Cost Basis)",
+            x=["FG Break-even"],
+            y=[breakeven_per_mw],
+            base=[base1],
+            marker_color="#ff9800",
+            text=["${:,.0f}".format(breakeven_per_mw)],
+            textposition="outside",
+            width=0.5,
+        ))
+        
+        fig_waterfall.add_trace(go.Bar(
+            name="FG Margin (FG Profit)",
+            x=["FG Margin"],
+            y=[fg_margin_per_mw_at_scale],
+            base=[base2],
+            marker_color="#1F4E79",
+            text=["${:,.0f}".format(fg_margin_per_mw_at_scale)],
+            textposition="outside",
+            width=0.5,
+        ))
+        
+        fig_waterfall.add_trace(go.Bar(
+            name="Client Uplift (Your Value)",
+            x=["Client Uplift"],
+            y=[client_uplift_per_mw],
+            base=[base3],
+            marker_color="#28a745",
+            text=["${:,.0f}".format(client_uplift_per_mw)],
+            textposition="outside",
+            width=0.5,
+        ))
+        
+        fig_waterfall.add_trace(go.Bar(
+            name="Total $/MW/Year",
+            x=["TOTAL"],
+            y=[total_value_chart],
+            base=[0],
+            marker_color="#2e7d32",
+            text=["${:,.0f}".format(total_value_chart)],
+            textposition="outside",
+            width=0.5,
+        ))
+        
+        fig_waterfall.add_shape(
+            type="line", x0=0.25, x1=0.75, y0=breakeven_per_mw, y1=breakeven_per_mw,
+            line=dict(color="gray", width=1, dash="dot")
+        )
+        fig_waterfall.add_shape(
+            type="line", x0=1.25, x1=1.75, y0=base3, y1=base3,
+            line=dict(color="gray", width=1, dash="dot")
+        )
+        fig_waterfall.add_shape(
+            type="line", x0=2.25, x1=2.75, y0=total_value_chart, y1=total_value_chart,
+            line=dict(color="gray", width=1, dash="dot")
+        )
+        
+        fig_waterfall.update_layout(
+            title="Value Creation Breakdown at {:,.0f} MW ({}: ${:.2f}M budget)".format(mw_contracted, year_option, fg_annual_cost/1e6),
+            yaxis_title="$/MW/Year",
+            yaxis_tickformat="$,.0f",
+            yaxis_range=[0, total_value_chart + 10000],
+            height=450,
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            bargap=0.3,
+        )
+        
+        st.plotly_chart(fig_waterfall, use_container_width=True)
+        
+        with st.expander("ℹ️ How to interpret this chart"):
+            margin_insight = "With a **{:.1f}x margin of safety**, FG only needs to capture {:.0f}% of the projected value to cover costs. The rest is upside for both parties.".format(margin_of_safety, 1/margin_of_safety*100) if margin_of_safety > 0 else "Margin of safety cannot be calculated."
+            st.markdown("""
+            **The Sales Story:**
+            
+            1. **FG Break-even (${:,.0f}/MW)** - This is our cost to operate. At {:,.0f} MW, 
+               we need ${:,.0f}/MW just to cover our {} budget of ${:,.0f}.
+               *This is verifiable and concrete.*
+            
+            2. **FG Margin (${:,.0f}/MW)** - This is our profit above break-even. 
+               It's determined by the **FG Fee Rate ({:.0f}%)** you set.
+               *This is negotiable based on your fee structure.*
+            
+            3. **Client Uplift (${:,.0f}/MW)** - This is YOUR value. 
+               It's the remaining {:.0f}% of the total opportunity.
+               *This depends on market conditions and capture rates.*
+            
+            4. **Total Value (${:,.0f}/MW)** - The full DART opportunity we can capture together.
+            
+            ---
+            
+            **Key Insight:** {}
+            """.format(breakeven_per_mw, mw_contracted, breakeven_per_mw, year_option, fg_annual_cost,
+                      fg_margin_per_mw_at_scale, fee_rate, client_uplift_per_mw, (100-fee_rate), value_per_mw, margin_insight))
+    else:
+        if fee_rate == 0:
+            st.info("ℹ️ Break-even analysis requires FG Fee Rate > 0%. Set a fee rate to see the analysis.")
+        else:
+            st.warning("Cannot calculate break-even: MW for $10M is zero. Adjust parameters.")
 
 # TAB 2 - RN
 with tab2:
