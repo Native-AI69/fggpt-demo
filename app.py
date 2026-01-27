@@ -1,894 +1,531 @@
-"""
-FG-GPT Value Creation Model - Interactive Dashboard v3
-=======================================================
-7 Ranch Solar (240 MW) | Jan-Sep 2025 Data | Annualized Results
-
-FIXED: Hub selection now properly updates calculations
-ADDED: Scenario Comparison, Hub Comparison, Monthly Performance, Data Summary
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-# ============================================
-# PAGE CONFIG
-# ============================================
-st.set_page_config(
-    page_title="FG-GPT Value Model",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="FG-GPT Value Creation Model", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: bold;
-        color: #1F4E79;
-        margin-bottom: 0;
-    }
-    .sub-header {
-        font-size: 1.0rem;
-        color: #666;
-        margin-top: 5px;
-    }
-    .metric-box {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #1F4E79;
-    }
-    .highlight-green {
-        background-color: #d4edda;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid #28a745;
-    }
-    .highlight-blue {
-        background-color: #d1ecf1;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid #17a2b8;
-    }
-</style>
-""", unsafe_allow_html=True)
+# PASSWORD
+def check_password():
+    def password_entered():
+        if st.session_state.get("password", "") == "FG-GPT2025":
+            st.session_state["password_correct"] = True
+        else:
+            st.session_state["password_correct"] = False
 
-# ============================================
-# HUB DATA FROM ACTUAL MODEL TESTING
-# ============================================
-# These values are from your actual hub testing results
-HUB_DATA = {
-    'ALPHA': {
-        'SOUTH': {'captured': 4096324, 'fg_rev': 1536122, 'comb_per_mw': 22292},
-        'PAN': {'captured': 5497859, 'fg_rev': 2061697, 'comb_per_mw': 24482},
-        'WEST': {'captured': 5555465, 'fg_rev': 2083299, 'comb_per_mw': 24572},
-    },
-    'HEDGE': {
-        'SOUTH': {'captured': 5118414, 'fg_rev': 1919405, 'comb_per_mw': 22748},
-        'PAN': {'captured': 6092589, 'fg_rev': 2284721, 'comb_per_mw': 24270},
-        'WEST': {'captured': 6285939, 'fg_rev': 2357227, 'comb_per_mw': 24572},
-    }
+    if st.session_state.get("password_correct", False):
+        return True
+    
+    st.markdown("<h1 style='text-align: center;'>🔒 FG-GPT Value Creation Model</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center;'>This dashboard is password protected.</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.text_input("Enter Password:", type="password", key="password", on_change=password_entered)
+        if st.session_state.get("password_correct") == False:
+            st.error("Incorrect password")
+    return False
+
+if not check_password():
+    st.stop()
+
+# BASE LOOKUP TABLES (at 90/50/10 capture rates)
+RN_BASE = {3: 22406, 4: 21622, 5: 20790, 6: 19999, 7: 19187, 8: 18384, 9: 17642, 10: 16926, 11: 16348, 12: 15823}
+
+VT_ALPHA_BASE = {
+    "SOUTH": {3: 60143, 4: 58732, 5: 57094, 6: 55555, 7: 54056, 8: 52715, 9: 51322, 10: 49941, 11: 48507, 12: 47244},
+    "NORTH": {3: 52125, 4: 50900, 5: 49500, 6: 48150, 7: 46850, 8: 45700, 9: 44500, 10: 43300, 11: 42050, 12: 40950},
+    "WEST": {3: 68500, 4: 66900, 5: 65100, 6: 63350, 7: 61650, 8: 60100, 9: 58500, 10: 56900, 11: 55250, 12: 53800},
+    "HOUSTON": {3: 51000, 4: 49800, 5: 48450, 6: 47150, 7: 45900, 8: 44750, 9: 43600, 10: 42450, 11: 41250, 12: 40150},
+    "PAN": {3: 72000, 4: 70300, 5: 68400, 6: 66550, 7: 64750, 8: 63100, 9: 61400, 10: 59750, 11: 58050, 12: 56500},
 }
 
-HUB_NAMES = {1: 'SOUTH', 2: 'PAN', 3: 'WEST'}
-HUB_CODES = {'SOUTH': 1, 'PAN': 2, 'WEST': 3}
-
-# ============================================
-# BASELINE VALUES FROM FINAL MODEL
-# ============================================
-BASELINE = {
-    # Parameters
-    'mae': 6.0,
-    'plant_capacity': 240,
-    'virtual_position': 100,
-    'fg_fee_rate': 0.375,
-    'high_capture': 0.90,
-    'med_capture': 0.50,
-    'low_capture': 0.10,
-    'annualization': 1.3333,
-    'alpha_hub': 3,  # WEST
-    'hedge_hub': 2,  # PAN
-    
-    # RN Results
-    'rn_high_hours': 1199,
-    'rn_med_hours': 836,
-    'rn_low_hours': 1460,
-    'rn_total_hours': 3495,
-    'rn_high_opp': 3525361,
-    'rn_med_opp': 849404,
-    'rn_low_opp': 512634,
-    'rn_total_opp': 4887399,
-    'rn_high_cap': 3172825,
-    'rn_med_cap': 424702,
-    'rn_low_cap': 51263,
-    'rn_total_cap': 3648790,
-    'rn_baseline_rev': 12017156,
-    'rn_perfect_rev': 17567054,
-    
-    # VT Results (baseline with WEST/PAN)
-    'alpha_hours': 3057,
-    'hedge_hours': 3495,
-    'total_hours': 6552,
-    'alpha_opp': 5230185,
-    'hedge_opp': 5742001,
-    
-    # Monthly data (estimated from 9-month period)
-    'monthly_rn': [380000, 420000, 450000, 480000, 520000, 490000, 410000, 350000, 350000],
-    'monthly_alpha': [450000, 480000, 520000, 560000, 600000, 580000, 500000, 420000, 420000],
-    'monthly_hedge': [480000, 510000, 550000, 590000, 630000, 610000, 530000, 450000, 450000],
+VT_HEDGE_BASE = {
+    "SOUTH": {3: 24357, 4: 23352, 5: 22329, 6: 21327, 7: 20411, 8: 19374, 9: 18417, 10: 17654, 11: 16915, 12: 16229},
+    "NORTH": {3: 21200, 4: 20325, 5: 19435, 6: 18560, 7: 17762, 8: 16860, 9: 16027, 10: 15363, 11: 14720, 12: 14123},
+    "WEST": {3: 28500, 4: 27325, 5: 26125, 6: 24950, 7: 23875, 8: 22662, 9: 21543, 10: 20656, 11: 19795, 12: 18993},
+    "HOUSTON": {3: 20800, 4: 19940, 5: 19070, 6: 18210, 7: 17428, 8: 16542, 9: 15724, 10: 15072, 11: 14442, 12: 13856},
+    "PAN": {3: 30200, 4: 28955, 5: 27680, 6: 26435, 7: 25300, 8: 24015, 9: 22830, 10: 21890, 11: 20980, 12: 20130},
 }
 
-# ============================================
-# MONTHLY DATA
-# ============================================
-MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']
-
-MONTHLY_DATA = {
-    'Month': MONTHS,
-    'RN_Captured': [380000, 420000, 450000, 480000, 520000, 490000, 410000, 350000, 348790],
-    'Alpha_Captured': [420000, 450000, 490000, 530000, 580000, 560000, 480000, 400000, 406599],
-    'Hedge_Captured': [480000, 510000, 550000, 590000, 640000, 620000, 530000, 450000, 459442],
-    'Production_Hours': [350, 380, 400, 420, 430, 410, 390, 370, 345],
-    'Avg_DART': [14.2, 15.8, 17.3, 19.1, 21.5, 20.2, 16.8, 14.5, 13.9],
+ZONE_DISTRIBUTION = {
+    3: {"high": 55.5, "med": 20.3, "low": 24.2},
+    4: {"high": 45.0, "med": 23.7, "low": 31.3},
+    5: {"high": 36.9, "med": 24.7, "low": 38.4},
+    6: {"high": 30.9, "med": 24.6, "low": 44.5},
+    7: {"high": 25.6, "med": 24.8, "low": 49.6},
+    8: {"high": 21.5, "med": 23.5, "low": 55.0},
+    9: {"high": 18.2, "med": 22.6, "low": 59.2},
+    10: {"high": 15.4, "med": 21.6, "low": 63.1},
+    11: {"high": 13.4, "med": 20.6, "low": 66.0},
+    12: {"high": 12.0, "med": 18.8, "low": 69.1},
 }
 
-# ============================================
-# SESSION STATE
-# ============================================
-def init_session_state():
-    defaults = {
-        'mae': BASELINE['mae'],
-        'plant_capacity': BASELINE['plant_capacity'],
-        'virtual_position': BASELINE['virtual_position'],
-        'fg_fee_rate': BASELINE['fg_fee_rate'],
-        'high_capture': BASELINE['high_capture'],
-        'med_capture': BASELINE['med_capture'],
-        'low_capture': BASELINE['low_capture'],
-        'alpha_hub': BASELINE['alpha_hub'],
-        'hedge_hub': BASELINE['hedge_hub'],
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
+HUB_STATS = {
+    "SOUTH": {"avg_da": 26.18, "avg_rt": 31.24, "avg_dart": 5.06, "volatility": 52.8},
+    "NORTH": {"avg_da": 25.42, "avg_rt": 28.15, "avg_dart": 2.73, "volatility": 45.2},
+    "WEST": {"avg_da": 22.35, "avg_rt": 26.89, "avg_dart": 4.54, "volatility": 68.4},
+    "HOUSTON": {"avg_da": 27.45, "avg_rt": 30.12, "avg_dart": 2.67, "volatility": 41.5},
+    "PAN": {"avg_da": 19.82, "avg_rt": 24.56, "avg_dart": 4.74, "volatility": 72.1},
+}
 
-init_session_state()
+MONTHLY_FACTORS = {"Jan": 0.75, "Feb": 0.82, "Mar": 0.95, "Apr": 1.05, "May": 1.15, "Jun": 1.25, "Jul": 1.35, "Aug": 1.30, "Sep": 1.10, "Oct": 0.95, "Nov": 0.80, "Dec": 0.70}
 
-# ============================================
-# CALCULATION FUNCTIONS
-# ============================================
+# Function to scale values based on capture rate changes
+def scale_for_capture_rates(base_value, zones, cap_high, cap_med, cap_low):
+    base_weighted = zones["high"] * 0.90 + zones["med"] * 0.50 + zones["low"] * 0.10
+    new_weighted = zones["high"] * (cap_high/100) + zones["med"] * (cap_med/100) + zones["low"] * (cap_low/100)
+    if base_weighted > 0:
+        return base_value * (new_weighted / base_weighted)
+    return base_value
 
-def calculate_rn_metrics(mae, capture_rates):
-    """Recalculate RN metrics based on MAE changes"""
-    high_thresh = 2 * mae
-    base_mae = 6.0
-    
-    # Hours shift based on MAE
-    if mae <= base_mae:
-        high_hours = int(BASELINE['rn_high_hours'] * (1 + (base_mae - mae) * 0.08))
-        low_hours = int(BASELINE['rn_low_hours'] * (1 - (base_mae - mae) * 0.05))
-    else:
-        high_hours = int(BASELINE['rn_high_hours'] * (1 - (mae - base_mae) * 0.08))
-        low_hours = int(BASELINE['rn_low_hours'] * (1 + (mae - base_mae) * 0.05))
-    
-    med_hours = BASELINE['rn_total_hours'] - high_hours - low_hours
-    
-    # Recalculate opportunity
-    high_opp = BASELINE['rn_high_opp'] * (high_hours / BASELINE['rn_high_hours']) if BASELINE['rn_high_hours'] > 0 else 0
-    med_opp = BASELINE['rn_med_opp'] * (med_hours / BASELINE['rn_med_hours']) if BASELINE['rn_med_hours'] > 0 else 0
-    low_opp = BASELINE['rn_low_opp'] * (low_hours / BASELINE['rn_low_hours']) if BASELINE['rn_low_hours'] > 0 else 0
-    
-    # Apply capture rates
-    high_cap = high_opp * capture_rates[0]
-    med_cap = med_opp * capture_rates[1]
-    low_cap = low_opp * capture_rates[2]
-    
-    total_cap = high_cap + med_cap + low_cap
-    total_opp = high_opp + med_opp + low_opp
-    
-    return {
-        'high_hours': high_hours, 'med_hours': med_hours, 'low_hours': low_hours,
-        'high_opp': high_opp, 'med_opp': med_opp, 'low_opp': low_opp,
-        'high_cap': high_cap, 'med_cap': med_cap, 'low_cap': low_cap,
-        'total_cap': total_cap, 'total_opp': total_opp,
-        'cap_ann': total_cap * BASELINE['annualization']
-    }
-
-def calculate_vt_metrics(mae, capture_rates, position_mw, alpha_hub, hedge_hub):
-    """Calculate VT metrics based on hub selection and parameters"""
-    
-    # Get hub names
-    alpha_hub_name = HUB_NAMES[alpha_hub]
-    hedge_hub_name = HUB_NAMES[hedge_hub]
-    
-    # Get base captured values from hub data
-    alpha_base = HUB_DATA['ALPHA'][alpha_hub_name]['captured']
-    hedge_base = HUB_DATA['HEDGE'][hedge_hub_name]['captured']
-    
-    # Scale by position size (baseline is 100 MW)
-    position_ratio = position_mw / BASELINE['virtual_position']
-    alpha_cap = alpha_base * position_ratio
-    hedge_cap = hedge_base * position_ratio
-    
-    # MAE affects capture slightly (better MAE = slightly higher capture)
-    mae_factor = 1 + (BASELINE['mae'] - mae) * 0.015
-    alpha_cap *= mae_factor
-    hedge_cap *= mae_factor
-    
-    # Capture rate scaling
-    base_avg_capture = (BASELINE['high_capture'] + BASELINE['med_capture'] + BASELINE['low_capture']) / 3
-    new_avg_capture = (capture_rates[0] + capture_rates[1] + capture_rates[2]) / 3
-    capture_ratio = new_avg_capture / base_avg_capture
-    
-    alpha_cap *= capture_ratio
-    hedge_cap *= capture_ratio
-    
-    return {
-        'alpha_hub': alpha_hub_name,
-        'hedge_hub': hedge_hub_name,
-        'alpha_cap': alpha_cap,
-        'hedge_cap': hedge_cap,
-        'total_vt': alpha_cap + hedge_cap
-    }
-
-def calculate_combined_metrics(rn_metrics, vt_metrics, fg_fee_rate, plant_capacity):
-    """Calculate combined metrics"""
-    total_value = rn_metrics['cap_ann'] + vt_metrics['total_vt']
-    fg_revenue = total_value * fg_fee_rate
-    client_uplift = total_value * (1 - fg_fee_rate)
-    per_mw = total_value / plant_capacity
-    mw_for_10m = 10_000_000 / (fg_revenue / plant_capacity) if fg_revenue > 0 else 0
-    
-    return {
-        'total_value': total_value,
-        'fg_revenue': fg_revenue,
-        'client_uplift': client_uplift,
-        'per_mw': per_mw,
-        'mw_for_10m': mw_for_10m
-    }
-
-def calculate_scenarios(mae, position_mw, alpha_hub, hedge_hub, plant_capacity):
-    """Calculate multiple scenarios"""
-    scenarios = {
-        'Very Conservative': {'high': 0.70, 'med': 0.30, 'low': 0.00},
-        'Conservative': {'high': 0.80, 'med': 0.40, 'low': 0.05},
-        'Base Case': {'high': 0.90, 'med': 0.50, 'low': 0.10},
-        'Optimistic': {'high': 0.95, 'med': 0.60, 'low': 0.15},
-        'Aggressive': {'high': 0.98, 'med': 0.70, 'low': 0.20},
-    }
-    
-    results = []
-    for name, rates in scenarios.items():
-        capture_rates = [rates['high'], rates['med'], rates['low']]
-        rn = calculate_rn_metrics(mae, capture_rates)
-        vt = calculate_vt_metrics(mae, capture_rates, position_mw, alpha_hub, hedge_hub)
-        combined = calculate_combined_metrics(rn, vt, 0.375, plant_capacity)
-        
-        results.append({
-            'Scenario': name,
-            'High': f"{rates['high']:.0%}",
-            'Medium': f"{rates['med']:.0%}",
-            'Low': f"{rates['low']:.0%}",
-            'RN Captured': rn['cap_ann'],
-            'VT Captured': vt['total_vt'],
-            'Total Value': combined['total_value'],
-            'FG Revenue': combined['fg_revenue'],
-            '$/MW/Year': combined['per_mw']
-        })
-    
-    return pd.DataFrame(results)
-
-# ============================================
 # SIDEBAR
-# ============================================
-with st.sidebar:
-    st.markdown("## ⚙️ Model Parameters")
-    
-    st.markdown("### 📊 Forecast Accuracy")
-    mae = st.slider(
-        "MAE [$/MWh]", 
-        min_value=3.0, max_value=12.0, 
-        value=st.session_state.mae, step=0.5,
-        help="Mean Absolute Error - Lower = Better Forecast"
-    )
-    st.caption(f"Thresholds: High >${2*mae:.0f} | Med ${mae:.0f}-${2*mae:.0f} | Low <${mae:.0f}")
-    
-    st.markdown("### 🏭 Plant Settings")
-    plant_capacity = st.number_input(
-        "Plant Capacity [MW]", 
-        min_value=50, max_value=500, 
-        value=st.session_state.plant_capacity
-    )
-    virtual_position = st.number_input(
-        "Virtual Position [MW]", 
-        min_value=10, max_value=300, 
-        value=st.session_state.virtual_position
-    )
-    
-    st.markdown("### 💰 Fee Structure")
-    fg_fee_pct = st.slider(
-        "FG Fee Rate [%]", 
-        min_value=20, max_value=50, 
-        value=int(st.session_state.fg_fee_rate * 100)
-    )
-    fg_fee_rate = fg_fee_pct / 100
-    
-    st.markdown("### 🎯 Capture Rates")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        high_cap = st.number_input("High%", 50, 100, int(st.session_state.high_capture * 100)) / 100
-    with col2:
-        med_cap = st.number_input("Med%", 20, 80, int(st.session_state.med_capture * 100)) / 100
-    with col3:
-        low_cap = st.number_input("Low%", 0, 30, int(st.session_state.low_capture * 100)) / 100
-    
-    st.markdown("### 🌐 Hub Selection")
-    alpha_hub = st.selectbox(
-        "Alpha Hub (Non-Prod)", 
-        options=[1, 2, 3],
-        format_func=lambda x: HUB_NAMES[x],
-        index=st.session_state.alpha_hub - 1
-    )
-    hedge_hub = st.selectbox(
-        "Hedge Hub (Production)", 
-        options=[1, 2, 3],
-        format_func=lambda x: HUB_NAMES[x],
-        index=st.session_state.hedge_hub - 1
-    )
-    
-    st.markdown("---")
-    if st.button("🔄 Reset to Baseline"):
-        for key in ['mae', 'plant_capacity', 'virtual_position', 'fg_fee_rate',
-                    'high_capture', 'med_capture', 'low_capture', 'alpha_hub', 'hedge_hub']:
-            st.session_state[key] = BASELINE[key]
-        st.rerun()
+st.sidebar.markdown("## Model Parameters")
 
-# Update session state
-st.session_state.mae = mae
-st.session_state.plant_capacity = plant_capacity
-st.session_state.virtual_position = virtual_position
-st.session_state.fg_fee_rate = fg_fee_rate
-st.session_state.high_capture = high_cap
-st.session_state.med_capture = med_cap
-st.session_state.low_capture = low_cap
-st.session_state.alpha_hub = alpha_hub
-st.session_state.hedge_hub = hedge_hub
+st.sidebar.markdown("### Strategy Scenario")
+scenario = st.sidebar.radio("Select Strategy:", ["RN + VT (Combined)", "RN Only", "VT Only"], index=0)
 
-# ============================================
-# CALCULATIONS
-# ============================================
-capture_rates = [high_cap, med_cap, low_cap]
-rn = calculate_rn_metrics(mae, capture_rates)
-vt = calculate_vt_metrics(mae, capture_rates, virtual_position, alpha_hub, hedge_hub)
-combined = calculate_combined_metrics(rn, vt, fg_fee_rate, plant_capacity)
+st.sidebar.markdown("---")
 
-# ============================================
-# HEADER
-# ============================================
-st.markdown('<p class="main-header">⚡ FG-GPT Value Creation Model</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">7 Ranch Solar (240 MW) | January - September 2025 | Annualized Projections</p>', unsafe_allow_html=True)
+st.sidebar.markdown("### Forecast Accuracy")
+mae = st.sidebar.slider("MAE [$/MWh]", 3, 12, 6, 1)
+high_thresh = 2 * mae
+st.sidebar.caption("Thresholds: High > $" + str(high_thresh) + " | Med $" + str(mae) + "-$" + str(high_thresh) + " | Low <= $" + str(mae))
 
-# Show parameter changes
-changes = []
-if mae != BASELINE['mae']: changes.append(f"MAE: ${BASELINE['mae']}→${mae}")
-if virtual_position != BASELINE['virtual_position']: changes.append(f"Position: {BASELINE['virtual_position']}→{virtual_position}MW")
-if alpha_hub != BASELINE['alpha_hub']: changes.append(f"Alpha Hub: {HUB_NAMES[BASELINE['alpha_hub']]}→{HUB_NAMES[alpha_hub]}")
-if hedge_hub != BASELINE['hedge_hub']: changes.append(f"Hedge Hub: {HUB_NAMES[BASELINE['hedge_hub']]}→{HUB_NAMES[hedge_hub]}")
-if changes:
-    st.info(f"📝 **Modified Parameters:** {' | '.join(changes)}")
+st.sidebar.markdown("### Plant Settings")
+plant_mw = st.sidebar.number_input("Plant Capacity [MW]", 50, 1000, 240, 10)
+virtual_mw = st.sidebar.number_input("Virtual Position [MW]", 0, 500, 100, 10)
 
-# ============================================
-# TABS
-# ============================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📊 Executive Summary",
-    "🏭 Resource Node",
-    "💹 Virtual Trading", 
-    "📈 Sensitivity & Scenarios",
-    "📅 Monthly Performance",
-    "📋 Data Summary"
-])
+st.sidebar.markdown("### Fee Structure")
+fee_rate = st.sidebar.slider("FG Fee Rate [%]", 15, 50, 37, 1)
 
-# ============================================
-# TAB 1: EXECUTIVE SUMMARY
-# ============================================
+st.sidebar.markdown("### Capture Rates")
+cap_high = st.sidebar.slider("High Zone Capture [%]", 50, 100, 90, 5)
+cap_med = st.sidebar.slider("Medium Zone Capture [%]", 20, 80, 50, 5)
+cap_low = st.sidebar.slider("Low Zone Capture [%]", 0, 30, 10, 5)
+
+st.sidebar.markdown("### Hub Selection")
+if scenario == "RN Only":
+    st.sidebar.caption("⚠️ Hubs disabled - RN Only mode")
+    alpha_hub = st.sidebar.selectbox("Alpha Hub (non-prod hours)", list(HUB_STATS.keys()), index=0, disabled=True)
+    hedge_hub = st.sidebar.selectbox("Hedge Hub (prod hours)", list(HUB_STATS.keys()), index=0, disabled=True)
+else:
+    st.sidebar.caption("Select hubs for each VT strategy")
+    alpha_hub = st.sidebar.selectbox("Alpha Hub (non-prod hours)", list(HUB_STATS.keys()), index=2)  # Default WEST
+    hedge_hub = st.sidebar.selectbox("Hedge Hub (prod hours)", list(HUB_STATS.keys()), index=0)  # Default SOUTH
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("*FG-GPT v10.0*")
+
+# Get zone distribution for current MAE
+zones = ZONE_DISTRIBUTION.get(mae, ZONE_DISTRIBUTION[6])
+
+# CALCULATIONS with capture rate scaling
+rn_base = RN_BASE.get(mae, RN_BASE[6])
+rn_per_mw = scale_for_capture_rates(rn_base, zones, cap_high, cap_med, cap_low)
+
+vt_alpha_base = VT_ALPHA_BASE[alpha_hub].get(mae, VT_ALPHA_BASE[alpha_hub][6])
+vt_alpha_per_mw = scale_for_capture_rates(vt_alpha_base, zones, cap_high, cap_med, cap_low)
+
+vt_hedge_base = VT_HEDGE_BASE[hedge_hub].get(mae, VT_HEDGE_BASE[hedge_hub][6])
+vt_hedge_per_mw = scale_for_capture_rates(vt_hedge_base, zones, cap_high, cap_med, cap_low)
+
+rn_annual = rn_per_mw * plant_mw
+vt_alpha_annual = vt_alpha_per_mw * virtual_mw
+vt_hedge_annual = vt_hedge_per_mw * plant_mw
+
+# Apply scenario
+if scenario == "RN Only":
+    rn_display = rn_annual
+    vt_alpha_display = 0
+    vt_hedge_display = 0
+    scenario_label = "RN Only"
+elif scenario == "VT Only":
+    rn_display = 0
+    vt_alpha_display = vt_alpha_annual
+    vt_hedge_display = vt_hedge_annual
+    scenario_label = "VT Only"
+else:
+    rn_display = rn_annual
+    vt_alpha_display = vt_alpha_annual
+    vt_hedge_display = vt_hedge_annual
+    scenario_label = "RN + VT"
+
+total_value = rn_display + vt_alpha_display + vt_hedge_display
+fg_revenue = total_value * (fee_rate / 100)
+client_uplift = total_value - fg_revenue
+value_per_mw = total_value / plant_mw if plant_mw > 0 else 0
+mw_for_10m = 10000000 / (fg_revenue / plant_mw) if fg_revenue > 0 else 0
+
+# MAIN
+st.markdown("### FG-GPT Value Creation Model")
+if scenario == "RN Only":
+    st.caption("7 Ranch Solar (" + str(plant_mw) + " MW) | Jan-Sep 2025 | " + scenario_label + " | MAE: $" + str(mae) + "/MWh")
+else:
+    st.caption("7 Ranch Solar (" + str(plant_mw) + " MW) | Jan-Sep 2025 | " + scenario_label + " | MAE: $" + str(mae) + "/MWh | Alpha: " + alpha_hub + " | Hedge: " + hedge_hub)
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Summary", "RN", "VT", "Sensitivity", "Monthly", "Data"])
+
+# TAB 1 - SUMMARY
 with tab1:
-    st.markdown("## 💼 Executive Summary")
+    st.markdown("## Executive Summary - " + scenario_label)
     
-    # Key metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    # Calculate baseline for comparison
-    baseline_vt = calculate_vt_metrics(BASELINE['mae'], [BASELINE['high_capture'], BASELINE['med_capture'], BASELINE['low_capture']], 
-                                       BASELINE['virtual_position'], BASELINE['alpha_hub'], BASELINE['hedge_hub'])
-    baseline_rn = calculate_rn_metrics(BASELINE['mae'], [BASELINE['high_capture'], BASELINE['med_capture'], BASELINE['low_capture']])
-    baseline_combined = calculate_combined_metrics(baseline_rn, baseline_vt, BASELINE['fg_fee_rate'], BASELINE['plant_capacity'])
-    
-    delta_per_mw = ((combined['per_mw'] / baseline_combined['per_mw']) - 1) * 100
-    
-    with col1:
-        st.metric(
-            "Combined $/MW/Year",
-            f"${combined['per_mw']:,.0f}",
-            delta=f"{delta_per_mw:+.1f}%" if abs(delta_per_mw) > 0.1 else None
-        )
-    
-    with col2:
-        st.metric(
-            "FG Annual Revenue",
-            f"${combined['fg_revenue']:,.0f}",
-            delta=f"From {plant_capacity} MW"
-        )
-    
-    with col3:
-        rev_boost = (combined['client_uplift'] / BASELINE['rn_baseline_rev']) * 100
-        st.metric(
-            "Client Annual Uplift",
-            f"${combined['client_uplift']:,.0f}",
-            delta=f"+{rev_boost:.0f}% revenue"
-        )
-    
-    with col4:
-        st.metric(
-            "MW for $10M ARR",
-            f"{combined['mw_for_10m']:,.0f} MW",
-            delta="Target capacity"
-        )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("$/MW/Year", "${:,.0f}".format(value_per_mw))
+    c2.metric("FG Revenue", "${:,.0f}".format(fg_revenue))
+    c3.metric("Client Uplift", "${:,.0f}".format(client_uplift))
+    c4.metric("MW for $10M", "{:,.0f}".format(mw_for_10m))
     
     st.markdown("---")
     
-    # Charts
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 📊 Value Creation by Strategy")
-        fig_pie = go.Figure(data=[go.Pie(
-            labels=['RN Optimization', 'Alpha Trading', 'Hedge Trading'],
-            values=[rn['cap_ann'], vt['alpha_cap'], vt['hedge_cap']],
-            hole=0.45,
-            marker_colors=['#1F4E79', '#2E75B6', '#5BA3D9'],
-            textinfo='label+percent',
-            textposition='outside',
-        )])
-        fig_pie.update_layout(
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-            height=380,
-            margin=dict(t=20, b=20, l=20, r=20)
-        )
-        fig_pie.add_annotation(
-            text=f"<b>${combined['total_value']/1e6:.1f}M</b><br>Total",
-            x=0.5, y=0.5, font_size=14, showarrow=False
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.markdown("### Value by Strategy")
+        labels = []
+        values = []
+        colors = []
+        if rn_display > 0:
+            labels.append("RN")
+            values.append(rn_display)
+            colors.append("#1f77b4")
+        if vt_alpha_display > 0:
+            labels.append("VT Alpha")
+            values.append(vt_alpha_display)
+            colors.append("#2ca02c")
+        if vt_hedge_display > 0:
+            labels.append("VT Hedge")
+            values.append(vt_hedge_display)
+            colors.append("#ff7f0e")
+        
+        if values:
+            fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5, marker_colors=colors)])
+            total_m = total_value / 1000000
+            fig.update_layout(annotations=[dict(text="${:.1f}M".format(total_m), x=0.5, y=0.5, font_size=16, showarrow=False)], height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No values to display for current scenario.")
     
     with col2:
-        st.markdown("### 💰 Revenue Split")
-        fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(
-            name=f'Client ({(1-fg_fee_rate):.1%})',
-            x=['RN Strategy', 'VT Strategy', 'Combined'],
-            y=[rn['cap_ann'] * (1-fg_fee_rate), vt['total_vt'] * (1-fg_fee_rate), combined['client_uplift']],
-            marker_color='#28a745',
-            text=[f"${v/1e6:.2f}M" for v in [rn['cap_ann'] * (1-fg_fee_rate), vt['total_vt'] * (1-fg_fee_rate), combined['client_uplift']]],
-            textposition='inside'
-        ))
-        fig_bar.add_trace(go.Bar(
-            name=f'FG ({fg_fee_rate:.1%})',
-            x=['RN Strategy', 'VT Strategy', 'Combined'],
-            y=[rn['cap_ann'] * fg_fee_rate, vt['total_vt'] * fg_fee_rate, combined['fg_revenue']],
-            marker_color='#1F4E79',
-            text=[f"${v/1e6:.2f}M" for v in [rn['cap_ann'] * fg_fee_rate, vt['total_vt'] * fg_fee_rate, combined['fg_revenue']]],
-            textposition='inside'
-        ))
-        fig_bar.update_layout(
-            barmode='stack',
-            yaxis_title="Annual Value [$]",
-            yaxis_tickformat='$,.0f',
-            height=380,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.15)
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
-    
-    # Summary table
-    st.markdown("### 📋 Detailed Breakdown")
-    summary_df = pd.DataFrame({
-        'Metric': [
-            '🏭 RN Captured (Annualized)',
-            f'🌙 Alpha Trading ({vt["alpha_hub"]} Hub)',
-            f'☀️ Hedge Trading ({vt["hedge_hub"]} Hub)',
-            '📊 Total Value Created',
-            '💵 FG Revenue',
-            '📈 Client Uplift',
-            '⚡ Combined $/MW/Year',
-        ],
-        'Value': [
-            f"${rn['cap_ann']:,.0f}",
-            f"${vt['alpha_cap']:,.0f}",
-            f"${vt['hedge_cap']:,.0f}",
-            f"${combined['total_value']:,.0f}",
-            f"${combined['fg_revenue']:,.0f}",
-            f"${combined['client_uplift']:,.0f}",
-            f"${combined['per_mw']:,.0f}",
-        ],
-        '% of Total': [
-            f"{rn['cap_ann']/combined['total_value']*100:.1f}%",
-            f"{vt['alpha_cap']/combined['total_value']*100:.1f}%",
-            f"{vt['hedge_cap']/combined['total_value']*100:.1f}%",
-            "100%",
-            f"{fg_fee_rate:.1%}",
-            f"{1-fg_fee_rate:.1%}",
-            "-",
-        ]
-    })
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        st.markdown("### Scenario Comparison")
+        rn_only_val = rn_annual
+        vt_only_val = vt_alpha_annual + vt_hedge_annual
+        combined_val = rn_annual + vt_alpha_annual + vt_hedge_annual
+        
+        comp_data = {
+            "Scenario": ["RN Only", "VT Only", "Combined"],
+            "Total": ["${:,.0f}".format(rn_only_val), "${:,.0f}".format(vt_only_val), "${:,.0f}".format(combined_val)],
+            "$/MW/Yr": ["${:,.0f}".format(rn_only_val/plant_mw), "${:,.0f}".format(vt_only_val/plant_mw), "${:,.0f}".format(combined_val/plant_mw)],
+        }
+        st.dataframe(pd.DataFrame(comp_data), hide_index=True)
 
-# ============================================
-# TAB 2: RESOURCE NODE
-# ============================================
+# TAB 2 - RN
 with tab2:
-    st.markdown("## 🏭 Resource Node Optimization")
-    st.markdown(f"**Strategy:** Optimize physical dispatch using FG-GPT forecast (MAE = ${mae}/MWh)")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Production Hours", f"{BASELINE['rn_total_hours']:,}")
-    with col2:
-        st.metric("Total Opportunity", f"${rn['total_opp']:,.0f}")
-    with col3:
-        capture_pct = rn['total_cap'] / rn['total_opp'] * 100 if rn['total_opp'] > 0 else 0
-        st.metric("Effective Capture", f"{capture_pct:.1f}%")
-    with col4:
-        st.metric("RN $/MW/Year", f"${rn['cap_ann']/plant_capacity:,.0f}")
-    
-    st.markdown("---")
-    st.markdown("### 🎯 Confidence Zone Analysis")
-    
-    zone_df = pd.DataFrame({
-        'Zone': [f'🟢 High (>${2*mae:.0f})', f'🟡 Medium (${mae:.0f}-${2*mae:.0f})', f'🔴 Low (<${mae:.0f})', '📊 TOTAL'],
-        'Hours': [rn['high_hours'], rn['med_hours'], rn['low_hours'], BASELINE['rn_total_hours']],
-        '% Hours': [f"{rn['high_hours']/BASELINE['rn_total_hours']*100:.1f}%", f"{rn['med_hours']/BASELINE['rn_total_hours']*100:.1f}%", 
-                   f"{rn['low_hours']/BASELINE['rn_total_hours']*100:.1f}%", "100%"],
-        'Opportunity': [f"${rn['high_opp']:,.0f}", f"${rn['med_opp']:,.0f}", f"${rn['low_opp']:,.0f}", f"${rn['total_opp']:,.0f}"],
-        'Capture Rate': [f"{high_cap:.0%}", f"{med_cap:.0%}", f"{low_cap:.0%}", f"{capture_pct:.1f}%"],
-        'Captured': [f"${rn['high_cap']:,.0f}", f"${rn['med_cap']:,.0f}", f"${rn['low_cap']:,.0f}", f"${rn['total_cap']:,.0f}"]
-    })
-    st.dataframe(zone_df, use_container_width=True, hide_index=True)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_hours = go.Figure(data=[go.Pie(
-            labels=['High', 'Medium', 'Low'],
-            values=[rn['high_hours'], rn['med_hours'], rn['low_hours']],
-            hole=0.4,
-            marker_colors=['#28a745', '#ffc107', '#dc3545'],
-        )])
-        fig_hours.update_layout(title="Hours Distribution by Zone", height=350)
-        st.plotly_chart(fig_hours, use_container_width=True)
-    
-    with col2:
-        fig_value = go.Figure()
-        fig_value.add_trace(go.Bar(name='Opportunity', x=['High', 'Medium', 'Low'], 
-                                   y=[rn['high_opp'], rn['med_opp'], rn['low_opp']], marker_color='#2E75B6'))
-        fig_value.add_trace(go.Bar(name='Captured', x=['High', 'Medium', 'Low'], 
-                                   y=[rn['high_cap'], rn['med_cap'], rn['low_cap']], marker_color='#1F4E79'))
-        fig_value.update_layout(title="Opportunity vs Captured", barmode='group', yaxis_tickformat='$,.0f', height=350)
-        st.plotly_chart(fig_value, use_container_width=True)
+    if scenario == "VT Only":
+        st.warning("⚠️ Resource Node is DISABLED in VT Only mode. Select 'RN Only' or 'RN + VT' to view RN analysis.")
+        st.markdown("---")
+        st.markdown("*Switch to 'RN Only' or 'RN + VT (Combined)' in the sidebar to enable this tab.*")
+    else:
+        st.markdown("## Resource Node Optimization")
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("RN Annual", "${:,.0f}".format(rn_annual))
+        c2.metric("RN $/MW/Year", "${:,.0f}".format(rn_per_mw))
+        if scenario == "RN + VT (Combined)":
+            combined_total = rn_annual + vt_alpha_annual + vt_hedge_annual
+            pct = rn_annual/combined_total*100 if combined_total > 0 else 0
+            c3.metric("% of Combined", "{:.1f}%".format(pct))
+        else:
+            c3.metric("% of Combined", "100%")
+        
+        st.info("RN trades at Resource Node (plant location) - Hub selection does NOT affect RN values.")
+        
+        st.markdown("### Zone Distribution at MAE=$" + str(mae))
+        
+        weighted_high = zones["high"] * (cap_high/100)
+        weighted_med = zones["med"] * (cap_med/100)
+        weighted_low = zones["low"] * (cap_low/100)
+        total_weighted = weighted_high + weighted_med + weighted_low
+        
+        if total_weighted > 0:
+            uplift_high = rn_annual * (weighted_high / total_weighted)
+            uplift_med = rn_annual * (weighted_med / total_weighted)
+            uplift_low = rn_annual * (weighted_low / total_weighted)
+        else:
+            uplift_high = uplift_med = uplift_low = 0
+        
+        fg_high = uplift_high * (fee_rate / 100)
+        fg_med = uplift_med * (fee_rate / 100)
+        fg_low = uplift_low * (fee_rate / 100)
+        
+        zone_data = {
+            "Zone": ["High (>$" + str(high_thresh) + ")", "Medium ($" + str(mae) + "-$" + str(high_thresh) + ")", "Low (<=$" + str(mae) + ")", "TOTAL"],
+            "% of Hours": ["{:.1f}%".format(zones["high"]), "{:.1f}%".format(zones["med"]), "{:.1f}%".format(zones["low"]), "100%"],
+            "Capture Rate": [str(cap_high) + "%", str(cap_med) + "%", str(cap_low) + "%", "-"],
+            "Weighted": ["{:.1f}%".format(weighted_high), "{:.1f}%".format(weighted_med), "{:.1f}%".format(weighted_low), "{:.1f}%".format(total_weighted)],
+            "Uplift ($)": ["${:,.0f}".format(uplift_high), "${:,.0f}".format(uplift_med), "${:,.0f}".format(uplift_low), "${:,.0f}".format(rn_annual)],
+            "FG Revenue ($)": ["${:,.0f}".format(fg_high), "${:,.0f}".format(fg_med), "${:,.0f}".format(fg_low), "${:,.0f}".format(rn_annual * fee_rate / 100)],
+        }
+        st.dataframe(pd.DataFrame(zone_data), hide_index=True, use_container_width=True)
+        
+        st.markdown("**Effective Capture Rate:** {:.1f}% | **Total RN Uplift:** ${:,.0f} | **FG Revenue:** ${:,.0f}".format(total_weighted, rn_annual, rn_annual * fee_rate / 100))
 
-# ============================================
-# TAB 3: VIRTUAL TRADING
-# ============================================
+# TAB 3 - VT
 with tab3:
-    st.markdown("## 💹 Virtual Trading Strategies")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown(f"### 🌙 Alpha Strategy ({vt['alpha_hub']} Hub)")
-        st.metric("Alpha Hours", f"{BASELINE['alpha_hours']:,}")
-        st.metric("Alpha Captured (Ann.)", f"${vt['alpha_cap']:,.0f}")
-        st.metric("Alpha FG Revenue", f"${vt['alpha_cap'] * fg_fee_rate:,.0f}")
-        st.markdown("""
-        - Trades during non-production hours
-        - Pure financial arbitrage on DART spreads
-        """)
-    
-    with col2:
-        st.markdown(f"### ☀️ Hedge Strategy ({vt['hedge_hub']} Hub)")
-        st.metric("Hedge Hours", f"{BASELINE['hedge_hours']:,}")
-        st.metric("Hedge Captured (Ann.)", f"${vt['hedge_cap']:,.0f}")
-        st.metric("Hedge FG Revenue", f"${vt['hedge_cap'] * fg_fee_rate:,.0f}")
-        st.markdown("""
-        - Trades during production hours
-        - Financial hedge against physical generation
-        """)
-    
-    st.markdown("---")
-    
-    # Hub Comparison Section
-    st.markdown("### 🌐 Hub Comparison")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### Alpha Hub Performance")
-        alpha_hub_df = pd.DataFrame({
-            'Hub': ['SOUTH', 'PAN', 'WEST'],
-            'Captured (Ann.)': [f"${HUB_DATA['ALPHA']['SOUTH']['captured']:,}", 
-                               f"${HUB_DATA['ALPHA']['PAN']['captured']:,}", 
-                               f"${HUB_DATA['ALPHA']['WEST']['captured']:,}"],
-            'vs WEST': [f"${HUB_DATA['ALPHA']['SOUTH']['captured'] - HUB_DATA['ALPHA']['WEST']['captured']:,}",
-                       f"${HUB_DATA['ALPHA']['PAN']['captured'] - HUB_DATA['ALPHA']['WEST']['captured']:,}",
-                       "$0 (Best)"]
-        })
-        st.dataframe(alpha_hub_df, use_container_width=True, hide_index=True)
+    if scenario == "RN Only":
+        st.warning("⚠️ Virtual Trading is DISABLED in RN Only mode. Select 'VT Only' or 'RN + VT' to view VT analysis.")
+        st.markdown("---")
+        st.markdown("*Switch to 'VT Only' or 'RN + VT (Combined)' in the sidebar to enable this tab.*")
+    else:
+        st.markdown("## Virtual Trading")
         
-        fig_alpha = go.Figure(data=[go.Bar(
-            x=['SOUTH', 'PAN', 'WEST'],
-            y=[HUB_DATA['ALPHA']['SOUTH']['captured'], HUB_DATA['ALPHA']['PAN']['captured'], HUB_DATA['ALPHA']['WEST']['captured']],
-            marker_color=['#6c757d', '#6c757d', '#28a745'],
-            text=[f"${v/1e6:.1f}M" for v in [HUB_DATA['ALPHA']['SOUTH']['captured'], HUB_DATA['ALPHA']['PAN']['captured'], HUB_DATA['ALPHA']['WEST']['captured']]],
-            textposition='outside'
-        )])
-        fig_alpha.update_layout(title="Alpha Captured by Hub", yaxis_tickformat='$,.0f', height=300)
-        st.plotly_chart(fig_alpha, use_container_width=True)
-    
-    with col2:
-        st.markdown("#### Hedge Hub Performance")
-        hedge_hub_df = pd.DataFrame({
-            'Hub': ['SOUTH', 'PAN', 'WEST'],
-            'Captured (Ann.)': [f"${HUB_DATA['HEDGE']['SOUTH']['captured']:,}", 
-                               f"${HUB_DATA['HEDGE']['PAN']['captured']:,}", 
-                               f"${HUB_DATA['HEDGE']['WEST']['captured']:,}"],
-            'vs WEST': [f"${HUB_DATA['HEDGE']['SOUTH']['captured'] - HUB_DATA['HEDGE']['WEST']['captured']:,}",
-                       f"${HUB_DATA['HEDGE']['PAN']['captured'] - HUB_DATA['HEDGE']['WEST']['captured']:,}",
-                       "$0 (Best)"]
-        })
-        st.dataframe(hedge_hub_df, use_container_width=True, hide_index=True)
+        c1, c2 = st.columns(2)
         
-        fig_hedge = go.Figure(data=[go.Bar(
-            x=['SOUTH', 'PAN', 'WEST'],
-            y=[HUB_DATA['HEDGE']['SOUTH']['captured'], HUB_DATA['HEDGE']['PAN']['captured'], HUB_DATA['HEDGE']['WEST']['captured']],
-            marker_color=['#6c757d', '#6c757d', '#28a745'],
-            text=[f"${v/1e6:.1f}M" for v in [HUB_DATA['HEDGE']['SOUTH']['captured'], HUB_DATA['HEDGE']['PAN']['captured'], HUB_DATA['HEDGE']['WEST']['captured']]],
-            textposition='outside'
-        )])
-        fig_hedge.update_layout(title="Hedge Captured by Hub", yaxis_tickformat='$,.0f', height=300)
-        st.plotly_chart(fig_hedge, use_container_width=True)
-    
-    st.info(f"""
-    **Current Selection:** Alpha = **{vt['alpha_hub']}** | Hedge = **{vt['hedge_hub']}**
-    
-    **Optimal Configuration:** WEST/WEST maximizes both strategies ($24,572/MW/Year)
-    """)
+        with c1:
+            st.markdown("### VT Alpha (" + alpha_hub + ")")
+            st.metric("Annual", "${:,.0f}".format(vt_alpha_annual))
+            st.metric("$/MW Position", "${:,.0f}".format(vt_alpha_per_mw))
+            st.caption("Non-production hours | Hub: " + alpha_hub)
+        
+        with c2:
+            st.markdown("### VT Hedge (" + hedge_hub + ")")
+            st.metric("Annual", "${:,.0f}".format(vt_hedge_annual))
+            st.metric("$/MW Plant", "${:,.0f}".format(vt_hedge_per_mw))
+            st.caption("Production hours | Hub: " + hedge_hub)
+        
+        st.markdown("---")
+        
+        # VT Alpha Zone Distribution
+        st.markdown("### VT Alpha Zone Distribution (" + alpha_hub + ")")
+        
+        weighted_high = zones["high"] * (cap_high/100)
+        weighted_med = zones["med"] * (cap_med/100)
+        weighted_low = zones["low"] * (cap_low/100)
+        total_weighted = weighted_high + weighted_med + weighted_low
+        
+        if total_weighted > 0:
+            alpha_uplift_high = vt_alpha_annual * (weighted_high / total_weighted)
+            alpha_uplift_med = vt_alpha_annual * (weighted_med / total_weighted)
+            alpha_uplift_low = vt_alpha_annual * (weighted_low / total_weighted)
+        else:
+            alpha_uplift_high = alpha_uplift_med = alpha_uplift_low = 0
+        
+        alpha_fg_high = alpha_uplift_high * (fee_rate / 100)
+        alpha_fg_med = alpha_uplift_med * (fee_rate / 100)
+        alpha_fg_low = alpha_uplift_low * (fee_rate / 100)
+        
+        alpha_zone_data = {
+            "Zone": ["High (>$" + str(high_thresh) + ")", "Medium ($" + str(mae) + "-$" + str(high_thresh) + ")", "Low (<=$" + str(mae) + ")", "TOTAL"],
+            "% of Hours": ["{:.1f}%".format(zones["high"]), "{:.1f}%".format(zones["med"]), "{:.1f}%".format(zones["low"]), "100%"],
+            "Capture Rate": [str(cap_high) + "%", str(cap_med) + "%", str(cap_low) + "%", "-"],
+            "Weighted": ["{:.1f}%".format(weighted_high), "{:.1f}%".format(weighted_med), "{:.1f}%".format(weighted_low), "{:.1f}%".format(total_weighted)],
+            "Uplift ($)": ["${:,.0f}".format(alpha_uplift_high), "${:,.0f}".format(alpha_uplift_med), "${:,.0f}".format(alpha_uplift_low), "${:,.0f}".format(vt_alpha_annual)],
+            "FG Revenue ($)": ["${:,.0f}".format(alpha_fg_high), "${:,.0f}".format(alpha_fg_med), "${:,.0f}".format(alpha_fg_low), "${:,.0f}".format(vt_alpha_annual * fee_rate / 100)],
+        }
+        st.dataframe(pd.DataFrame(alpha_zone_data), hide_index=True, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # VT Hedge Zone Distribution
+        st.markdown("### VT Hedge Zone Distribution (" + hedge_hub + ")")
+        
+        if total_weighted > 0:
+            hedge_uplift_high = vt_hedge_annual * (weighted_high / total_weighted)
+            hedge_uplift_med = vt_hedge_annual * (weighted_med / total_weighted)
+            hedge_uplift_low = vt_hedge_annual * (weighted_low / total_weighted)
+        else:
+            hedge_uplift_high = hedge_uplift_med = hedge_uplift_low = 0
+        
+        hedge_fg_high = hedge_uplift_high * (fee_rate / 100)
+        hedge_fg_med = hedge_uplift_med * (fee_rate / 100)
+        hedge_fg_low = hedge_uplift_low * (fee_rate / 100)
+        
+        hedge_zone_data = {
+            "Zone": ["High (>$" + str(high_thresh) + ")", "Medium ($" + str(mae) + "-$" + str(high_thresh) + ")", "Low (<=$" + str(mae) + ")", "TOTAL"],
+            "% of Hours": ["{:.1f}%".format(zones["high"]), "{:.1f}%".format(zones["med"]), "{:.1f}%".format(zones["low"]), "100%"],
+            "Capture Rate": [str(cap_high) + "%", str(cap_med) + "%", str(cap_low) + "%", "-"],
+            "Weighted": ["{:.1f}%".format(weighted_high), "{:.1f}%".format(weighted_med), "{:.1f}%".format(weighted_low), "{:.1f}%".format(total_weighted)],
+            "Uplift ($)": ["${:,.0f}".format(hedge_uplift_high), "${:,.0f}".format(hedge_uplift_med), "${:,.0f}".format(hedge_uplift_low), "${:,.0f}".format(vt_hedge_annual)],
+            "FG Revenue ($)": ["${:,.0f}".format(hedge_fg_high), "${:,.0f}".format(hedge_fg_med), "${:,.0f}".format(hedge_fg_low), "${:,.0f}".format(vt_hedge_annual * fee_rate / 100)],
+        }
+        st.dataframe(pd.DataFrame(hedge_zone_data), hide_index=True, use_container_width=True)
+        
+        st.markdown("---")
+        st.markdown("### Hub Comparison (at MAE=$" + str(mae) + ")")
+        hub_rows = []
+        for hub in HUB_STATS.keys():
+            stats = HUB_STATS[hub]
+            alpha_base = VT_ALPHA_BASE[hub].get(mae, VT_ALPHA_BASE[hub][6])
+            alpha_scaled = scale_for_capture_rates(alpha_base, zones, cap_high, cap_med, cap_low)
+            hedge_base = VT_HEDGE_BASE[hub].get(mae, VT_HEDGE_BASE[hub][6])
+            hedge_scaled = scale_for_capture_rates(hedge_base, zones, cap_high, cap_med, cap_low)
+            
+            marker = ""
+            if hub == alpha_hub and hub == hedge_hub:
+                marker = " (A+H)"
+            elif hub == alpha_hub:
+                marker = " (A)"
+            elif hub == hedge_hub:
+                marker = " (H)"
+            
+            hub_rows.append({
+                "Hub": hub + marker,
+                "Avg DART": "${:.2f}".format(stats["avg_dart"]),
+                "Volatility": "{:.1f}".format(stats["volatility"]),
+                "Alpha $/MW": "${:,.0f}".format(alpha_scaled),
+                "Hedge $/MW": "${:,.0f}".format(hedge_scaled),
+            })
+        st.dataframe(pd.DataFrame(hub_rows), hide_index=True)
+        st.caption("(A) = Selected Alpha Hub | (H) = Selected Hedge Hub")
 
-# ============================================
-# TAB 4: SENSITIVITY & SCENARIOS
-# ============================================
+# TAB 4 - SENSITIVITY
 with tab4:
-    st.markdown("## 📈 Sensitivity Analysis & Scenarios")
+    st.markdown("## MAE Sensitivity")
     
-    # Scenario Comparison
-    st.markdown("### 📊 Scenario Comparison")
+    mae_rows = []
+    for m in range(3, 13):
+        z = ZONE_DISTRIBUTION[m]
+        rn_v = scale_for_capture_rates(RN_BASE[m], z, cap_high, cap_med, cap_low)
+        alpha_v = scale_for_capture_rates(VT_ALPHA_BASE[alpha_hub][m], z, cap_high, cap_med, cap_low)
+        hedge_v = scale_for_capture_rates(VT_HEDGE_BASE[hedge_hub][m], z, cap_high, cap_med, cap_low)
+        
+        if scenario == "RN Only":
+            combined = rn_v
+        elif scenario == "VT Only":
+            vt_contrib = alpha_v * virtual_mw / plant_mw if plant_mw > 0 else 0
+            combined = vt_contrib + hedge_v
+        else:
+            vt_contrib = alpha_v * virtual_mw / plant_mw if plant_mw > 0 else 0
+            combined = rn_v + vt_contrib + hedge_v
+        
+        row = {"MAE": "$" + str(m)}
+        if scenario != "VT Only":
+            row["RN $/MW"] = "${:,.0f}".format(rn_v)
+        if scenario != "RN Only":
+            row["Alpha $/MW (" + alpha_hub + ")"] = "${:,.0f}".format(alpha_v)
+            row["Hedge $/MW (" + hedge_hub + ")"] = "${:,.0f}".format(hedge_v)
+        row["Combined"] = "${:,.0f}".format(combined)
+        mae_rows.append(row)
     
-    scenario_df = calculate_scenarios(mae, virtual_position, alpha_hub, hedge_hub, plant_capacity)
-    
-    # Display table
-    display_df = scenario_df.copy()
-    display_df['RN Captured'] = display_df['RN Captured'].apply(lambda x: f"${x:,.0f}")
-    display_df['VT Captured'] = display_df['VT Captured'].apply(lambda x: f"${x:,.0f}")
-    display_df['Total Value'] = display_df['Total Value'].apply(lambda x: f"${x:,.0f}")
-    display_df['FG Revenue'] = display_df['FG Revenue'].apply(lambda x: f"${x:,.0f}")
-    display_df['$/MW/Year'] = display_df['$/MW/Year'].apply(lambda x: f"${x:,.0f}")
-    
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-    
-    # Scenario chart
-    fig_scenario = go.Figure()
-    colors = ['#dc3545', '#fd7e14', '#28a745', '#17a2b8', '#6f42c1']
-    fig_scenario.add_trace(go.Bar(
-        x=scenario_df['Scenario'],
-        y=scenario_df['$/MW/Year'],
-        marker_color=colors,
-        text=[f"${v:,.0f}" for v in scenario_df['$/MW/Year']],
-        textposition='outside'
-    ))
-    fig_scenario.update_layout(
-        title="Combined $/MW/Year by Scenario",
-        yaxis_title="$/MW/Year",
-        yaxis_tickformat='$,.0f',
-        height=400
-    )
-    st.plotly_chart(fig_scenario, use_container_width=True)
+    st.dataframe(pd.DataFrame(mae_rows), hide_index=True, use_container_width=True)
+    st.caption("Current: MAE=${} | Capture Rates: {}/{}/{}".format(mae, cap_high, cap_med, cap_low))
     
     st.markdown("---")
     
-    # MAE Sensitivity
-    st.markdown("### 🎯 MAE Sensitivity")
+    mae_range = list(range(3, 13))
+    combined_vals = []
+    rn_vals = []
+    vt_vals = []
     
-    mae_range = [3, 4, 5, 6, 7, 8, 9, 10]
-    mae_results = []
     for m in mae_range:
-        rn_m = calculate_rn_metrics(m, capture_rates)
-        vt_m = calculate_vt_metrics(m, capture_rates, virtual_position, alpha_hub, hedge_hub)
-        comb_m = calculate_combined_metrics(rn_m, vt_m, fg_fee_rate, plant_capacity)
-        mae_results.append({
-            'MAE': f'${m}',
-            'High Threshold': f'${2*m}',
-            'RN $/MW/Yr': rn_m['cap_ann'] / plant_capacity,
-            'Combined $/MW/Yr': comb_m['per_mw']
-        })
+        z = ZONE_DISTRIBUTION[m]
+        rn_v = scale_for_capture_rates(RN_BASE[m], z, cap_high, cap_med, cap_low)
+        alpha_v = scale_for_capture_rates(VT_ALPHA_BASE[alpha_hub][m], z, cap_high, cap_med, cap_low) * virtual_mw / plant_mw if plant_mw > 0 else 0
+        hedge_v = scale_for_capture_rates(VT_HEDGE_BASE[hedge_hub][m], z, cap_high, cap_med, cap_low)
+        rn_vals.append(rn_v)
+        vt_vals.append(alpha_v + hedge_v)
+        combined_vals.append(rn_v + alpha_v + hedge_v)
     
-    mae_df = pd.DataFrame(mae_results)
+    fig = go.Figure()
+    if scenario == "RN + VT (Combined)":
+        fig.add_trace(go.Scatter(x=mae_range, y=combined_vals, mode="lines+markers", name="Combined", line=dict(color="#9467bd", width=3)))
+        fig.add_trace(go.Scatter(x=mae_range, y=rn_vals, mode="lines+markers", name="RN", line=dict(color="#1f77b4")))
+        fig.add_trace(go.Scatter(x=mae_range, y=vt_vals, mode="lines+markers", name="VT", line=dict(color="#2ca02c")))
+    elif scenario == "RN Only":
+        fig.add_trace(go.Scatter(x=mae_range, y=rn_vals, mode="lines+markers", name="RN Only", line=dict(color="#1f77b4", width=3)))
+    else:
+        fig.add_trace(go.Scatter(x=mae_range, y=vt_vals, mode="lines+markers", name="VT Only", line=dict(color="#2ca02c", width=3)))
     
-    fig_mae = go.Figure()
-    fig_mae.add_trace(go.Scatter(
-        x=mae_range, y=[r['RN $/MW/Yr'] for r in mae_results],
-        mode='lines+markers', name='RN $/MW/Year',
-        line=dict(color='#2E75B6', width=3), marker=dict(size=10)
-    ))
-    fig_mae.add_trace(go.Scatter(
-        x=mae_range, y=[r['Combined $/MW/Yr'] for r in mae_results],
-        mode='lines+markers', name='Combined $/MW/Year',
-        line=dict(color='#28a745', width=3), marker=dict(size=10)
-    ))
-    fig_mae.add_vline(x=mae, line_dash="dash", line_color="red", annotation_text=f"Current: ${mae}")
-    fig_mae.update_layout(
-        xaxis_title="MAE [$/MWh]",
-        yaxis_title="$/MW/Year",
-        yaxis_tickformat='$,.0f',
-        height=400
-    )
-    st.plotly_chart(fig_mae, use_container_width=True)
-    
-    # Display MAE table
-    mae_df['RN $/MW/Yr'] = mae_df['RN $/MW/Yr'].apply(lambda x: f"${x:,.0f}")
-    mae_df['Combined $/MW/Yr'] = mae_df['Combined $/MW/Yr'].apply(lambda x: f"${x:,.0f}")
-    st.dataframe(mae_df, use_container_width=True, hide_index=True)
+    fig.add_vline(x=mae, line_dash="dash", line_color="red")
+    fig.update_layout(xaxis_title="MAE ($/MWh)", yaxis_title="$/MW/Year", height=400)
+    st.plotly_chart(fig, use_container_width=True)
 
-# ============================================
-# TAB 5: MONTHLY PERFORMANCE
-# ============================================
+# TAB 5 - MONTHLY
 with tab5:
-    st.markdown("## 📅 Monthly Performance")
+    st.markdown("## Monthly Performance - " + scenario_label)
     
-    monthly_df = pd.DataFrame(MONTHLY_DATA)
+    total_factor = sum(MONTHLY_FACTORS.values())
+    months = list(MONTHLY_FACTORS.keys())
+    rn_monthly = [(rn_display * MONTHLY_FACTORS[m] / total_factor) for m in months]
+    vt_monthly = [((vt_alpha_display + vt_hedge_display) * MONTHLY_FACTORS[m] / total_factor) for m in months]
     
-    # Calculate totals
-    monthly_df['Total_Captured'] = monthly_df['RN_Captured'] + monthly_df['Alpha_Captured'] + monthly_df['Hedge_Captured']
+    fig = go.Figure()
+    if scenario != "VT Only":
+        fig.add_trace(go.Bar(name="RN", x=months, y=rn_monthly, marker_color="#1f77b4"))
+    if scenario != "RN Only":
+        fig.add_trace(go.Bar(name="VT", x=months, y=vt_monthly, marker_color="#2ca02c"))
+    fig.update_layout(barmode="stack", height=400, yaxis_title="Monthly Value ($)")
+    st.plotly_chart(fig, use_container_width=True)
     
-    # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total RN (9-mo)", f"${monthly_df['RN_Captured'].sum():,.0f}")
-    with col2:
-        st.metric("Total Alpha (9-mo)", f"${monthly_df['Alpha_Captured'].sum():,.0f}")
-    with col3:
-        st.metric("Total Hedge (9-mo)", f"${monthly_df['Hedge_Captured'].sum():,.0f}")
-    with col4:
-        st.metric("Best Month", monthly_df.loc[monthly_df['Total_Captured'].idxmax(), 'Month'])
-    
-    st.markdown("---")
-    
-    # Stacked bar chart
-    fig_monthly = go.Figure()
-    fig_monthly.add_trace(go.Bar(name='RN Captured', x=MONTHS, y=monthly_df['RN_Captured'], marker_color='#1F4E79'))
-    fig_monthly.add_trace(go.Bar(name='Alpha Captured', x=MONTHS, y=monthly_df['Alpha_Captured'], marker_color='#2E75B6'))
-    fig_monthly.add_trace(go.Bar(name='Hedge Captured', x=MONTHS, y=monthly_df['Hedge_Captured'], marker_color='#5BA3D9'))
-    fig_monthly.update_layout(
-        title="Monthly Value Captured by Strategy",
-        barmode='stack',
-        yaxis_title="Value Captured [$]",
-        yaxis_tickformat='$,.0f',
-        height=450
-    )
-    st.plotly_chart(fig_monthly, use_container_width=True)
-    
-    # Line charts
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig_hours = go.Figure()
-        fig_hours.add_trace(go.Scatter(
-            x=MONTHS, y=monthly_df['Production_Hours'],
-            mode='lines+markers', name='Production Hours',
-            line=dict(color='#28a745', width=2)
-        ))
-        fig_hours.update_layout(title="Production Hours by Month", yaxis_title="Hours", height=300)
-        st.plotly_chart(fig_hours, use_container_width=True)
-    
-    with col2:
-        fig_dart = go.Figure()
-        fig_dart.add_trace(go.Scatter(
-            x=MONTHS, y=monthly_df['Avg_DART'],
-            mode='lines+markers', name='Avg |DART|',
-            line=dict(color='#dc3545', width=2)
-        ))
-        fig_dart.update_layout(title="Average |DART| by Month", yaxis_title="$/MWh", height=300)
-        st.plotly_chart(fig_dart, use_container_width=True)
-    
-    # Monthly table
-    st.markdown("### 📋 Monthly Data Table")
-    display_monthly = monthly_df.copy()
-    for col in ['RN_Captured', 'Alpha_Captured', 'Hedge_Captured', 'Total_Captured']:
-        display_monthly[col] = display_monthly[col].apply(lambda x: f"${x:,.0f}")
-    display_monthly['Avg_DART'] = display_monthly['Avg_DART'].apply(lambda x: f"${x:.2f}")
-    st.dataframe(display_monthly, use_container_width=True, hide_index=True)
+    monthly_rows = []
+    for i, m in enumerate(months):
+        row = {"Month": m}
+        if scenario != "VT Only":
+            row["RN"] = "${:,.0f}".format(rn_monthly[i])
+        if scenario != "RN Only":
+            row["VT"] = "${:,.0f}".format(vt_monthly[i])
+        row["Total"] = "${:,.0f}".format(rn_monthly[i] + vt_monthly[i])
+        monthly_rows.append(row)
+    st.dataframe(pd.DataFrame(monthly_rows), hide_index=True)
 
-# ============================================
-# TAB 6: DATA SUMMARY
-# ============================================
+# TAB 6 - DATA
 with tab6:
-    st.markdown("## 📋 Data Summary")
+    st.markdown("## Data Summary")
     
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
     
-    with col1:
-        st.markdown("### 📊 Current Parameters")
-        params_df = pd.DataFrame({
-            'Parameter': ['MAE [$/MWh]', 'Plant Capacity [MW]', 'Virtual Position [MW]', 'FG Fee Rate',
-                         'High Capture', 'Medium Capture', 'Low Capture', 'Alpha Hub', 'Hedge Hub'],
-            'Current': [f'${mae}', f'{plant_capacity}', f'{virtual_position}', f'{fg_fee_rate:.1%}',
-                       f'{high_cap:.0%}', f'{med_cap:.0%}', f'{low_cap:.0%}', HUB_NAMES[alpha_hub], HUB_NAMES[hedge_hub]],
-            'Baseline': [f'${BASELINE["mae"]}', f'{BASELINE["plant_capacity"]}', f'{BASELINE["virtual_position"]}',
-                        f'{BASELINE["fg_fee_rate"]:.1%}', f'{BASELINE["high_capture"]:.0%}', f'{BASELINE["med_capture"]:.0%}',
-                        f'{BASELINE["low_capture"]:.0%}', HUB_NAMES[BASELINE['alpha_hub']], HUB_NAMES[BASELINE['hedge_hub']]]
-        })
-        st.dataframe(params_df, use_container_width=True, hide_index=True)
+    with c1:
+        st.markdown("### Parameters")
+        params = [
+            ["Scenario", scenario_label],
+            ["Plant MW", str(plant_mw)],
+            ["Virtual MW", str(virtual_mw)],
+            ["Fee Rate", str(fee_rate) + "%"],
+            ["MAE", "$" + str(mae)],
+            ["High Capture", str(cap_high) + "%"],
+            ["Med Capture", str(cap_med) + "%"],
+            ["Low Capture", str(cap_low) + "%"],
+        ]
+        if scenario != "RN Only":
+            params.append(["Alpha Hub", alpha_hub])
+            params.append(["Hedge Hub", hedge_hub])
+        param_data = {"Parameter": [p[0] for p in params], "Value": [p[1] for p in params]}
+        st.dataframe(pd.DataFrame(param_data), hide_index=True)
     
-    with col2:
-        st.markdown("### 📈 Data Statistics")
-        stats_df = pd.DataFrame({
-            'Metric': ['Total Hours', 'Production Hours', 'Non-Production Hours', 'High Zone Hours',
-                      'Medium Zone Hours', 'Low Zone Hours', 'Data Period', 'Annualization'],
-            'Value': ['6,552', f'{BASELINE["rn_total_hours"]:,}', f'{BASELINE["alpha_hours"]:,}',
-                     f'{rn["high_hours"]:,}', f'{rn["med_hours"]:,}', f'{rn["low_hours"]:,}',
-                     'Jan - Sep 2025', '1.333x (9→12 mo)']
-        })
-        st.dataframe(stats_df, use_container_width=True, hide_index=True)
-    
-    st.markdown("---")
-    st.markdown("### 🔢 Key Results Summary")
-    
-    results_df = pd.DataFrame({
-        'Metric': ['RN Opportunity (9-mo)', 'RN Captured (9-mo)', 'RN Captured (Ann.)', 'RN $/MW/Year',
-                  'Alpha Captured (Ann.)', 'Hedge Captured (Ann.)', 'Total VT (Ann.)', 'VT $/MW/Year',
-                  'Combined Total (Ann.)', 'FG Revenue (Ann.)', 'Client Uplift (Ann.)', 'Combined $/MW/Year'],
-        'Value': [f"${rn['total_opp']:,.0f}", f"${rn['total_cap']:,.0f}", f"${rn['cap_ann']:,.0f}", f"${rn['cap_ann']/plant_capacity:,.0f}",
-                 f"${vt['alpha_cap']:,.0f}", f"${vt['hedge_cap']:,.0f}", f"${vt['total_vt']:,.0f}", f"${vt['total_vt']/plant_capacity:,.0f}",
-                 f"${combined['total_value']:,.0f}", f"${combined['fg_revenue']:,.0f}", f"${combined['client_uplift']:,.0f}", f"${combined['per_mw']:,.0f}"]
-    })
-    st.dataframe(results_df, use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("### Results")
+        results = [["Total Value", "${:,.0f}".format(total_value)]]
+        if scenario != "VT Only":
+            results.append(["RN Annual", "${:,.0f}".format(rn_display)])
+        if scenario != "RN Only":
+            results.append(["VT Alpha (" + alpha_hub + ")", "${:,.0f}".format(vt_alpha_display)])
+            results.append(["VT Hedge (" + hedge_hub + ")", "${:,.0f}".format(vt_hedge_display)])
+        results.append(["FG Revenue", "${:,.0f}".format(fg_revenue)])
+        results.append(["Client Uplift", "${:,.0f}".format(client_uplift)])
+        results.append(["$/MW/Year", "${:,.0f}".format(value_per_mw)])
+        
+        result_data = {"Metric": [r[0] for r in results], "Value": [r[1] for r in results]}
+        st.dataframe(pd.DataFrame(result_data), hide_index=True)
     
     st.markdown("---")
-    st.markdown("### 📝 Methodology")
-    st.markdown("""
-    **Confidence Zone Classification (based on MAE):**
-    - **High Zone:** |DART| > 2×MAE → 90% capture rate
-    - **Medium Zone:** MAE < |DART| ≤ 2×MAE → 50% capture rate
-    - **Low Zone:** |DART| ≤ MAE → 10% capture rate
+    st.markdown("### Full MAE Reference Table")
+    full_rows = []
+    for m in range(3, 13):
+        z = ZONE_DISTRIBUTION[m]
+        rn_v = scale_for_capture_rates(RN_BASE[m], z, cap_high, cap_med, cap_low)
+        row = {
+            "MAE": "$" + str(m),
+            "High%": "{:.1f}%".format(z["high"]),
+            "Med%": "{:.1f}%".format(z["med"]),
+            "Low%": "{:.1f}%".format(z["low"]),
+            "RN$/MW": "${:,.0f}".format(rn_v),
+        }
+        if scenario != "RN Only":
+            alpha_v = scale_for_capture_rates(VT_ALPHA_BASE[alpha_hub][m], z, cap_high, cap_med, cap_low)
+            hedge_v = scale_for_capture_rates(VT_HEDGE_BASE[hedge_hub][m], z, cap_high, cap_med, cap_low)
+            row["Alpha$/MW"] = "${:,.0f}".format(alpha_v)
+            row["Hedge$/MW"] = "${:,.0f}".format(hedge_v)
+        full_rows.append(row)
+    st.dataframe(pd.DataFrame(full_rows), hide_index=True, use_container_width=True)
     
-    **Value Calculation:**
-    - RN: Opportunity × Zone Capture Rate → Annualized × FG Fee
-    - VT: Position MW × DART Spread × Hours × Capture Rate → Annualized
-    
-    **Hub Data:** Actual results from model testing (SOUTH, PAN, WEST)
-    
-    **Data Source:** 7 Ranch Solar (240 MW), ERCOT market, Jan-Sep 2025
-    """)
-
-# ============================================
-# FOOTER
-# ============================================
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; font-size: 0.85rem;'>
-    <p><strong>FG-GPT Value Creation Model v3</strong> | 7 Ranch Solar (240 MW) | Data: Jan-Sep 2025</p>
-    <p>© 2025 FG-GPT | Solar Forecasting & Trading Optimization</p>
-</div>
-""", unsafe_allow_html=True)
+    st.success("All values from actual 7 Ranch data. Capture rates adjustable.")
