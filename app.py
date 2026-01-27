@@ -1,11 +1,10 @@
 """
-FG-GPT Value Creation Model - Interactive Dashboard v4
+FG-GPT Value Creation Model - Interactive Dashboard v3
 =======================================================
 7 Ranch Solar (240 MW) | Jan-Sep 2025 Data | Annualized Results
 
 FIXED: Hub selection now properly updates calculations
 ADDED: Scenario Comparison, Hub Comparison, Monthly Performance, Data Summary
-ADDED: Break-even Analysis with Budget from Excel
 """
 
 import streamlit as st
@@ -14,40 +13,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import os
-
-# ============================================
-# BUDGET DATA LOADING
-# ============================================
-@st.cache_data
-def load_budget_data(filepath="3Years.xlsx"):
-    """Load 3-year budget from Excel file."""
-    default_budget = {
-        'Year 1': 682000,
-        'Year 2': 1404700,
-        'Year 3': 2076800,
-    }
-    
-    try:
-        if os.path.exists(filepath):
-            xlsx = pd.ExcelFile(filepath)
-            df = pd.read_excel(xlsx, sheet_name='3-Year Summary')
-            
-            # Find the TOTAL BUDGET row
-            for idx, row in df.iterrows():
-                if 'TOTAL BUDGET' in str(row.iloc[0]):
-                    return {
-                        'Year 1': float(row.iloc[2]) if pd.notna(row.iloc[2]) else default_budget['Year 1'],
-                        'Year 2': float(row.iloc[3]) if pd.notna(row.iloc[3]) else default_budget['Year 2'],
-                        'Year 3': float(row.iloc[4]) if pd.notna(row.iloc[4]) else default_budget['Year 3'],
-                    }
-        return default_budget
-    except Exception as e:
-        st.warning(f"Could not load budget file: {e}. Using defaults.")
-        return default_budget
-
-# Load budget data
-BUDGET_DATA = load_budget_data()
 
 # ============================================
 # PAGE CONFIG
@@ -562,158 +527,6 @@ with tab1:
         ]
     })
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
-    
-    # ============================================
-    # BREAK-EVEN ANALYSIS SECTION
-    # ============================================
-    st.markdown("---")
-    st.markdown("### 💰 Break-even Analysis")
-    st.markdown("*Understand FG's cost basis and your value potential*")
-    
-    # Year selector
-    be_col1, be_col2, be_col3 = st.columns([1, 1, 2])
-    
-    with be_col1:
-        year_option = st.selectbox(
-            "Select Year",
-            options=["Year 1", "Year 2", "Year 3", "Custom"],
-            index=0,
-            help="Select budget year or enter custom amount"
-        )
-    
-    with be_col2:
-        if year_option == "Custom":
-            fg_annual_cost = st.number_input(
-                "Custom Budget ($)",
-                min_value=100000,
-                max_value=10000000,
-                value=2500000,
-                step=100000,
-                format="%d"
-            )
-        else:
-            fg_annual_cost = BUDGET_DATA[year_option]
-            st.metric("FG Annual Budget", f"${fg_annual_cost:,.0f}")
-    
-    # Calculate break-even metrics
-    mw_contracted = combined['mw_for_10m']  # Use MW for $10M as contracted capacity
-    
-    if mw_contracted > 0:
-        breakeven_per_mw = fg_annual_cost / mw_contracted
-        fg_revenue_per_mw = combined['fg_revenue'] / plant_capacity
-        fg_margin_per_mw = fg_revenue_per_mw - (fg_annual_cost / mw_contracted * (plant_capacity / mw_contracted))
-        
-        # Recalculate based on MW for $10M
-        breakeven_per_mw = fg_annual_cost / mw_contracted
-        fg_revenue_per_mw_at_scale = 10000000 / mw_contracted  # FG gets $10M at this MW level
-        fg_margin_per_mw_at_scale = fg_revenue_per_mw_at_scale - breakeven_per_mw
-        client_uplift_per_mw = combined['per_mw'] - fg_revenue_per_mw_at_scale
-        
-        # Margin of safety
-        margin_of_safety = fg_revenue_per_mw_at_scale / breakeven_per_mw if breakeven_per_mw > 0 else 0
-        
-        with be_col3:
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
-                        padding: 15px; border-radius: 10px; border-left: 4px solid #28a745;">
-                <b>At {mw_contracted:,.0f} MW contracted:</b><br>
-                Break-even: <b>${breakeven_per_mw:,.0f}/MW/Year</b><br>
-                Margin of Safety: <b>{margin_of_safety:.1f}x</b> 
-                <span style="color: #666; font-size: 0.9em;">(FG only needs {1/margin_of_safety*100:.0f}% of projected value to cover costs)</span>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Break-even metrics row
-        be_met_col1, be_met_col2, be_met_col3, be_met_col4 = st.columns(4)
-        
-        with be_met_col1:
-            st.metric(
-                "Break-even $/MW",
-                f"${breakeven_per_mw:,.0f}",
-                help="FG's cost basis per MW (Budget ÷ Contracted MWs)"
-            )
-        
-        with be_met_col2:
-            st.metric(
-                "FG Margin $/MW",
-                f"${fg_margin_per_mw_at_scale:,.0f}",
-                delta=f"{(fg_margin_per_mw_at_scale/fg_revenue_per_mw_at_scale)*100:.0f}% of FG revenue",
-                help="FG profit above break-even"
-            )
-        
-        with be_met_col3:
-            st.metric(
-                "Client Uplift $/MW",
-                f"${client_uplift_per_mw:,.0f}",
-                delta=f"{(client_uplift_per_mw/combined['per_mw'])*100:.0f}% of total",
-                help="Client's share of value"
-            )
-        
-        with be_met_col4:
-            st.metric(
-                "Total $/MW",
-                f"${combined['per_mw']:,.0f}",
-                help="Combined value per MW"
-            )
-        
-        # Waterfall Chart
-        st.markdown("#### 📊 Value Waterfall (Per MW Basis)")
-        
-        fig_waterfall = go.Figure(go.Waterfall(
-            name="Value Breakdown",
-            orientation="v",
-            measure=["absolute", "relative", "relative", "total"],
-            x=["FG Break-even<br>(Cost Basis)", "FG Margin<br>(FG Profit)", "Client Uplift<br>(Your Value)", "Total Value<br>$/MW/Year"],
-            y=[breakeven_per_mw, fg_margin_per_mw_at_scale, client_uplift_per_mw, 0],
-            text=[f"${breakeven_per_mw:,.0f}", f"${fg_margin_per_mw_at_scale:,.0f}", f"${client_uplift_per_mw:,.0f}", f"${combined['per_mw']:,.0f}"],
-            textposition="outside",
-            connector={"line": {"color": "rgb(63, 63, 63)"}},
-            decreasing={"marker": {"color": "#dc3545"}},
-            increasing={"marker": {"color": "#28a745"}},
-            totals={"marker": {"color": "#1F4E79"}},
-        ))
-        
-        # Custom colors for each bar
-        fig_waterfall.update_traces(
-            marker_color=["#ff9800", "#1F4E79", "#28a745", "#1F4E79"]
-        )
-        
-        fig_waterfall.update_layout(
-            title=f"Value Creation Breakdown at {mw_contracted:,.0f} MW ({year_option}: ${fg_annual_cost/1e6:.2f}M budget)",
-            yaxis_title="$/MW/Year",
-            yaxis_tickformat="$,.0f",
-            height=400,
-            showlegend=False,
-        )
-        
-        st.plotly_chart(fig_waterfall, use_container_width=True)
-        
-        # Explanation
-        with st.expander("ℹ️ How to interpret this chart"):
-            st.markdown(f"""
-            **The Sales Story:**
-            
-            1. **FG Break-even (${breakeven_per_mw:,.0f}/MW)** - This is our cost to operate. At {mw_contracted:,.0f} MW, 
-               we need ${breakeven_per_mw:,.0f}/MW just to cover our {year_option} budget of ${fg_annual_cost:,.0f}.
-               *This is verifiable and concrete.*
-            
-            2. **FG Margin (${fg_margin_per_mw_at_scale:,.0f}/MW)** - This is our profit above break-even. 
-               It's determined by the **FG Fee Rate ({fg_fee_rate:.1%})** you set.
-               *This is negotiable based on your fee structure.*
-            
-            3. **Client Uplift (${client_uplift_per_mw:,.0f}/MW)** - This is YOUR value. 
-               It's the remaining {(1-fg_fee_rate):.1%} of the total opportunity.
-               *This depends on market conditions and capture rates.*
-            
-            4. **Total Value (${combined['per_mw']:,.0f}/MW)** - The full DART opportunity we can capture together.
-            
-            ---
-            
-            **Key Insight:** With a **{margin_of_safety:.1f}x margin of safety**, FG only needs to capture 
-            {1/margin_of_safety*100:.0f}% of the projected value to cover costs. The rest is upside for both parties.
-            """)
-    else:
-        st.warning("Cannot calculate break-even: MW for $10M is zero. Adjust parameters.")
 
 # ============================================
 # TAB 2: RESOURCE NODE
