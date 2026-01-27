@@ -484,7 +484,7 @@ with st.sidebar:
     st.markdown("### 💰 Fee Structure")
     fg_fee_pct = st.slider(
         "FG Fee Rate [%]", 
-        min_value=20, max_value=50, 
+        min_value=0, max_value=50, 
         value=int(st.session_state.fg_fee_rate * 100)
     )
     fg_fee_rate = fg_fee_pct / 100
@@ -740,7 +740,7 @@ with tab1:
     # Calculate break-even metrics
     mw_contracted = combined['mw_for_10m']  # Use MW for $10M as contracted capacity
     
-    if mw_contracted > 0:
+    if mw_contracted > 0 and fg_fee_rate > 0:
         breakeven_per_mw = fg_annual_cost / mw_contracted
         fg_revenue_per_mw = combined['fg_revenue'] / plant_capacity
         fg_margin_per_mw = fg_revenue_per_mw - (fg_annual_cost / mw_contracted * (plant_capacity / mw_contracted))
@@ -755,13 +755,14 @@ with tab1:
         margin_of_safety = fg_revenue_per_mw_at_scale / breakeven_per_mw if breakeven_per_mw > 0 else 0
         
         with be_col3:
+            margin_pct_text = f"(FG only needs {1/margin_of_safety*100:.0f}% of projected value to cover costs)" if margin_of_safety > 0 else ""
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
                         padding: 15px; border-radius: 10px; border-left: 4px solid #28a745; color: #1b5e20;">
                 <b>At {mw_contracted:,.0f} MW contracted:</b><br>
                 Break-even: <b>${breakeven_per_mw:,.0f}/MW/Year</b><br>
                 Margin of Safety: <b>{margin_of_safety:.1f}x</b> 
-                <span style="color: #2e7d32; font-size: 0.9em;">(FG only needs {1/margin_of_safety*100:.0f}% of projected value to cover costs)</span>
+                <span style="color: #2e7d32; font-size: 0.9em;">{margin_pct_text}</span>
             </div>
             """, unsafe_allow_html=True)
         
@@ -776,10 +777,11 @@ with tab1:
             )
         
         with be_met_col2:
+            margin_pct = (fg_margin_per_mw_at_scale/fg_revenue_per_mw_at_scale)*100 if fg_revenue_per_mw_at_scale > 0 else 0
             st.metric(
                 "FG Margin $/MW",
                 f"${fg_margin_per_mw_at_scale:,.0f}",
-                delta=f"{(fg_margin_per_mw_at_scale/fg_revenue_per_mw_at_scale)*100:.0f}% of FG revenue",
+                delta=f"{margin_pct:.0f}% of FG revenue",
                 help="FG profit above break-even"
             )
         
@@ -875,6 +877,7 @@ with tab1:
             title=f"Value Creation Breakdown at {mw_contracted:,.0f} MW ({year_option}: ${fg_annual_cost/1e6:.2f}M budget)",
             yaxis_title="$/MW/Year",
             yaxis_tickformat="$,.0f",
+            yaxis_range=[0, total_value + 10000],  # Add ~$10k headroom for labels
             height=450,
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
@@ -885,6 +888,7 @@ with tab1:
         
         # Explanation
         with st.expander("ℹ️ How to interpret this chart"):
+            margin_insight = f"With a **{margin_of_safety:.1f}x margin of safety**, FG only needs to capture {1/margin_of_safety*100:.0f}% of the projected value to cover costs. The rest is upside for both parties." if margin_of_safety > 0 else "Margin of safety cannot be calculated."
             st.markdown(f"""
             **The Sales Story:**
             
@@ -904,11 +908,13 @@ with tab1:
             
             ---
             
-            **Key Insight:** With a **{margin_of_safety:.1f}x margin of safety**, FG only needs to capture 
-            {1/margin_of_safety*100:.0f}% of the projected value to cover costs. The rest is upside for both parties.
+            **Key Insight:** {margin_insight}
             """)
     else:
-        st.warning("Cannot calculate break-even: MW for $10M is zero. Adjust parameters.")
+        if fg_fee_rate == 0:
+            st.info("ℹ️ Break-even analysis requires FG Fee Rate > 0%. Set a fee rate to see the analysis.")
+        else:
+            st.warning("Cannot calculate break-even: MW for $10M is zero. Adjust parameters.")
 
 # ============================================
 # TAB 2: RESOURCE NODE
