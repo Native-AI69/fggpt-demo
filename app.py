@@ -932,6 +932,7 @@ with tab7:
         barmode="group",
         yaxis_title="$ Amount",
         yaxis_tickformat="$,.0f",
+        yaxis_range=[0, 12000000],  # Add headroom for $10M label
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
     )
