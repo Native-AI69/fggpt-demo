@@ -757,11 +757,11 @@ with tab1:
         with be_col3:
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
-                        padding: 15px; border-radius: 10px; border-left: 4px solid #28a745;">
+                        padding: 15px; border-radius: 10px; border-left: 4px solid #28a745; color: #1b5e20;">
                 <b>At {mw_contracted:,.0f} MW contracted:</b><br>
                 Break-even: <b>${breakeven_per_mw:,.0f}/MW/Year</b><br>
                 Margin of Safety: <b>{margin_of_safety:.1f}x</b> 
-                <span style="color: #666; font-size: 0.9em;">(FG only needs {1/margin_of_safety*100:.0f}% of projected value to cover costs)</span>
+                <span style="color: #2e7d32; font-size: 0.9em;">(FG only needs {1/margin_of_safety*100:.0f}% of projected value to cover costs)</span>
             </div>
             """, unsafe_allow_html=True)
         
@@ -798,60 +798,87 @@ with tab1:
                 help="Combined value per MW"
             )
         
-        # Waterfall Chart (using stacked bar for color control)
+        # Waterfall Chart (true waterfall with floating bars)
         st.markdown("#### 📊 Value Waterfall (Per MW Basis)")
+        
+        # Calculate cumulative positions for floating bars
+        base1 = 0
+        base2 = breakeven_per_mw
+        base3 = breakeven_per_mw + fg_margin_per_mw_at_scale
+        total_value = combined['per_mw']
         
         fig_waterfall = go.Figure()
         
-        # Add bars in order (stacked from bottom)
+        # Bar 1: FG Break-even (starts at 0)
         fig_waterfall.add_trace(go.Bar(
-            name="FG Break-even",
-            x=["Value Breakdown"],
+            name="FG Break-even (Cost Basis)",
+            x=["FG Break-even"],
             y=[breakeven_per_mw],
+            base=[base1],
             marker_color="#ff9800",
-            text=f"${breakeven_per_mw:,.0f}",
-            textposition="inside",
-            insidetextanchor="middle",
+            text=[f"${breakeven_per_mw:,.0f}"],
+            textposition="outside",
+            width=0.5,
         ))
         
+        # Bar 2: FG Margin (floats on top of break-even)
         fig_waterfall.add_trace(go.Bar(
-            name="FG Margin",
-            x=["Value Breakdown"],
+            name="FG Margin (FG Profit)",
+            x=["FG Margin"],
             y=[fg_margin_per_mw_at_scale],
+            base=[base2],
             marker_color="#1F4E79",
-            text=f"${fg_margin_per_mw_at_scale:,.0f}",
-            textposition="inside",
-            insidetextanchor="middle",
+            text=[f"${fg_margin_per_mw_at_scale:,.0f}"],
+            textposition="outside",
+            width=0.5,
         ))
         
+        # Bar 3: Client Uplift (floats on top of margin)
         fig_waterfall.add_trace(go.Bar(
-            name="Client Uplift",
-            x=["Value Breakdown"],
+            name="Client Uplift (Your Value)",
+            x=["Client Uplift"],
             y=[client_uplift_per_mw],
+            base=[base3],
             marker_color="#28a745",
-            text=f"${client_uplift_per_mw:,.0f}",
-            textposition="inside",
-            insidetextanchor="middle",
+            text=[f"${client_uplift_per_mw:,.0f}"],
+            textposition="outside",
+            width=0.5,
         ))
+        
+        # Bar 4: Total (full bar from 0)
+        fig_waterfall.add_trace(go.Bar(
+            name="Total $/MW/Year",
+            x=["TOTAL"],
+            y=[total_value],
+            base=[0],
+            marker_color="#2e7d32",
+            text=[f"${total_value:,.0f}"],
+            textposition="outside",
+            width=0.5,
+        ))
+        
+        # Add connector lines between bars
+        fig_waterfall.add_shape(
+            type="line", x0=0.25, x1=0.75, y0=breakeven_per_mw, y1=breakeven_per_mw,
+            line=dict(color="gray", width=1, dash="dot")
+        )
+        fig_waterfall.add_shape(
+            type="line", x0=1.25, x1=1.75, y0=base3, y1=base3,
+            line=dict(color="gray", width=1, dash="dot")
+        )
+        fig_waterfall.add_shape(
+            type="line", x0=2.25, x1=2.75, y0=total_value, y1=total_value,
+            line=dict(color="gray", width=1, dash="dot")
+        )
         
         fig_waterfall.update_layout(
             title=f"Value Creation Breakdown at {mw_contracted:,.0f} MW ({year_option}: ${fg_annual_cost/1e6:.2f}M budget)",
             yaxis_title="$/MW/Year",
             yaxis_tickformat="$,.0f",
-            height=400,
-            barmode="stack",
+            height=450,
             showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        )
-        
-        # Add total annotation at the top
-        fig_waterfall.add_annotation(
-            x="Value Breakdown",
-            y=combined['per_mw'],
-            text=f"<b>Total: ${combined['per_mw']:,.0f}/MW</b>",
-            showarrow=False,
-            yshift=15,
-            font=dict(size=14)
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            bargap=0.3,
         )
         
         st.plotly_chart(fig_waterfall, use_container_width=True)
