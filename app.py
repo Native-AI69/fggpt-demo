@@ -232,7 +232,7 @@ if st.sidebar.button("🔒 Lock Session", help="Re-display the confidentiality n
     st.session_state["disclaimer_accepted"] = False
     st.session_state["password_error"] = False
     st.rerun()
-st.sidebar.markdown("*FG-GPT v11.0*")
+st.sidebar.markdown("*FG-GPT v11.1*")
 
 # Get zone distribution for current MAE
 zones = ZONE_DISTRIBUTION.get(mae, ZONE_DISTRIBUTION[6])
@@ -281,7 +281,7 @@ if scenario == "RN Only":
 else:
     st.caption("7 Ranch Solar (" + str(plant_mw) + " MW) | Jan-Sep 2025 | " + scenario_label + " | MAE: $" + str(mae) + "/MWh | Alpha: " + alpha_hub + " | Hedge: " + hedge_hub)
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Summary", "RN", "VT", "Sensitivity", "Monthly", "Data"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["Summary", "RN", "VT", "Sensitivity", "Monthly", "Data", "💼 Budget"])
 
 # TAB 1 - SUMMARY
 with tab1:
@@ -845,3 +845,152 @@ with tab6:
     st.dataframe(pd.DataFrame(full_rows), hide_index=True, use_container_width=True)
     
     st.success("All values from actual 7 Ranch data. Capture rates adjustable.")
+
+# TAB 7 - BUDGET
+with tab7:
+    st.markdown("## 💼 FG-GPT 3-Year Budget")
+    st.markdown("*Operating cost structure for break-even analysis*")
+    
+    # Key metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Year 1", "${:,.0f}".format(BUDGET_DATA['Year 1']))
+    c2.metric("Year 2", "${:,.0f}".format(BUDGET_DATA['Year 2']))
+    c3.metric("Year 3", "${:,.0f}".format(BUDGET_DATA['Year 3']))
+    total_3yr = BUDGET_DATA['Year 1'] + BUDGET_DATA['Year 2'] + BUDGET_DATA['Year 3']
+    c4.metric("3-Year Total", "${:,.0f}".format(total_3yr))
+    
+    st.markdown("---")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📊 Annual Budget Progression")
+        years = ["Year 1", "Year 2", "Year 3"]
+        values = [BUDGET_DATA['Year 1'], BUDGET_DATA['Year 2'], BUDGET_DATA['Year 3']]
+        
+        fig_budget = go.Figure()
+        fig_budget.add_trace(go.Bar(
+            x=years,
+            y=values,
+            marker_color=["#1F4E79", "#2E75B6", "#5BA3D9"],
+            text=["${:,.0f}".format(v) for v in values],
+            textposition="outside"
+        ))
+        fig_budget.update_layout(
+            yaxis_title="Annual Budget ($)",
+            yaxis_tickformat="$,.0f",
+            height=350,
+            showlegend=False
+        )
+        st.plotly_chart(fig_budget, use_container_width=True)
+    
+    with col2:
+        st.markdown("### 📈 Monthly Burn Rate")
+        monthly_burn = [BUDGET_DATA['Year 1']/12, BUDGET_DATA['Year 2']/12, BUDGET_DATA['Year 3']/12]
+        
+        fig_burn = go.Figure()
+        fig_burn.add_trace(go.Scatter(
+            x=years,
+            y=monthly_burn,
+            mode="lines+markers+text",
+            marker=dict(size=12, color="#ff9800"),
+            line=dict(width=3, color="#ff9800"),
+            text=["${:,.0f}".format(v) for v in monthly_burn],
+            textposition="top center"
+        ))
+        fig_burn.update_layout(
+            yaxis_title="Monthly Burn ($)",
+            yaxis_tickformat="$,.0f",
+            height=350
+        )
+        st.plotly_chart(fig_burn, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Try to load detailed budget breakdown
+    st.markdown("### 📋 Detailed Budget Breakdown")
+    
+    try:
+        if os.path.exists("3Years.xlsx"):
+            xlsx = pd.ExcelFile("3Years.xlsx")
+            df_summary = pd.read_excel(xlsx, sheet_name='3-Year Summary')
+            
+            # Extract relevant rows for display
+            budget_rows = []
+            for idx, row in df_summary.iterrows():
+                code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
+                category = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
+                
+                # Skip empty rows and header rows
+                if code in ['Code', 'NaN', '', 'nan'] or category in ['NaN', '', 'nan']:
+                    continue
+                
+                # Get values
+                y1 = row.iloc[2] if pd.notna(row.iloc[2]) else 0
+                y2 = row.iloc[3] if pd.notna(row.iloc[3]) else 0
+                y3 = row.iloc[4] if pd.notna(row.iloc[4]) else 0
+                
+                # Only include rows with actual budget codes or subtotals
+                if code.isdigit() or 'Subtotal' in category or 'TOTAL' in category or 'CONTINGENCY' in category:
+                    if isinstance(y1, (int, float)) and (y1 > 0 or y2 > 0 or y3 > 0):
+                        budget_rows.append({
+                            "Code": code if code.isdigit() else "",
+                            "Category": category,
+                            "Year 1": "${:,.0f}".format(y1) if isinstance(y1, (int, float)) else "-",
+                            "Year 2": "${:,.0f}".format(y2) if isinstance(y2, (int, float)) else "-",
+                            "Year 3": "${:,.0f}".format(y3) if isinstance(y3, (int, float)) else "-",
+                        })
+            
+            if budget_rows:
+                st.dataframe(pd.DataFrame(budget_rows), hide_index=True, use_container_width=True)
+            else:
+                # Fallback to simple display
+                raise Exception("No detailed data found")
+        else:
+            raise Exception("File not found")
+            
+    except Exception as e:
+        # Fallback: show simple budget table
+        simple_budget = {
+            "Category": ["Personnel", "Model Development", "Data Acquisition", "Pilots/Customer Success", 
+                        "Compliance & Security", "G&A Operations", "Contingency (10%)", "TOTAL"],
+            "Year 1": ["$120,000", "$250,000", "$30,000", "$80,000", "$30,000", "$110,000", "$62,000", "${:,.0f}".format(BUDGET_DATA['Year 1'])],
+            "Year 2": ["$567,000", "$312,500", "$37,500", "$100,000", "$150,000", "$110,000", "$127,700", "${:,.0f}".format(BUDGET_DATA['Year 2'])],
+            "Year 3": ["$929,500", "$421,875", "$50,625", "$135,000", "$202,500", "$148,500", "$188,800", "${:,.0f}".format(BUDGET_DATA['Year 3'])],
+        }
+        st.dataframe(pd.DataFrame(simple_budget), hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Budget composition pie chart
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 🥧 Year 1 Composition")
+        y1_categories = ["Personnel", "Model Dev", "Data", "Pilots", "Compliance", "G&A", "Contingency"]
+        y1_values = [120000, 250000, 30000, 80000, 30000, 110000, 62000]
+        
+        fig_pie1 = go.Figure(data=[go.Pie(
+            labels=y1_categories,
+            values=y1_values,
+            hole=0.4,
+            marker_colors=["#1F4E79", "#2E75B6", "#5BA3D9", "#8BC4EA", "#28a745", "#ff9800", "#dc3545"]
+        )])
+        fig_pie1.update_layout(height=300)
+        st.plotly_chart(fig_pie1, use_container_width=True)
+    
+    with col2:
+        st.markdown("### 🥧 Year 3 Composition")
+        y3_categories = ["Personnel", "Model Dev", "Data", "Pilots", "Compliance", "G&A", "Contingency"]
+        y3_values = [929500, 421875, 50625, 135000, 202500, 148500, 188800]
+        
+        fig_pie3 = go.Figure(data=[go.Pie(
+            labels=y3_categories,
+            values=y3_values,
+            hole=0.4,
+            marker_colors=["#1F4E79", "#2E75B6", "#5BA3D9", "#8BC4EA", "#28a745", "#ff9800", "#dc3545"]
+        )])
+        fig_pie3.update_layout(height=300)
+        st.plotly_chart(fig_pie3, use_container_width=True)
+    
+    st.info("💡 **Note:** Budget data is loaded from `3Years.xlsx`. Update the Excel file to modify budget assumptions.")
